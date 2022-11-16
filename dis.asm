@@ -3,7 +3,6 @@
 .stack
 	MAX_BUFF 	EQU 10
 .data
-	bufSize				db MAX_BUFF
 	about               db "Tomas Kozakas, 2 kursas, 1 grupe.", 10, 13, 'Programa disasembleris vercia masinini koda i assemblerio kalba.',  10, 13, 9, 'dis.exe mano.com kodas.asm$'	
 	err_op 			    db ' - nepavyko atidaryti', 13, 10, '$'
 	err_re 				db 'nepavyko skaityti', 13, 10, '$'
@@ -15,14 +14,16 @@
 	asm     			db MAX_BUFF, ?, MAX_BUFF dup(0)
 		asmHandle	    dw ?
 	buffer 				db MAX_BUFF dup(?)
-
-	not_recogn			db 'NOT RECOGNISED', 13, 10, '$'
-
-
-	dollar          db 10, 13, '$'
+	
+	not_recogn			db 'NOT RECOGNISED', 13, '$'
+	mov_				db 'MOV$'
+	rcr_				db 'RCR$'
+	not_				db 'NOT$'
+	out_				db 'OUT$'
+	xlat_				db 'XLAT$'
+	
+	endline          db 13, '$'
 .code
-
-
 
 beginning:	
 	jmp near ptr main
@@ -34,9 +35,7 @@ main proc near
     call near ptr read_terminal
     
 	;; read com
-	mov bx, comHandle
 	call near ptr file_read
-
 
 main_end:
 	;; return to dos
@@ -49,6 +48,7 @@ file_read proc near
 new_buffer:
 	mov ah, 3Fh
 	mov dx, offset buffer
+	mov bx, comHandle
 	mov cx, MAX_BUFF
 	int 21h
 	jc error_read
@@ -75,35 +75,89 @@ read_end:
 	;; close file
 	mov ah, 3eh
 	int 21h
-
     ret
 file_read endp
 
 
+;; write stuff to file
+file_write proc near
+	push cx
+
+	;; print in standart output
+	mov ah, 9
+	int 21h
+
+	;; find length of string (store length in cx)
+	call strlen
+	mov ah, 40h
+	mov bx, asmHandle
+	int  21h
+
+	pop cx
+	ret
+file_write ENDP
+
+
 
 dissasemble proc near
-	mov bx, asmHandle	
-	; 1110 OUT
-	; 1000 MOV
-	; 1101 XLAT
-	; 1101 RCR
-	; 1111 NOT
+	; 1000 10dw mod reg r/m [poslinkis] – MOV registras <=> registras/atmintis
+	; 1000 11d0 mod 0sr r/m [poslinkis] – MOV segmento registras <=> registras/atmintis
+	; 1101 00vw mod 011 r/m [poslinkis] – RCR registras/atmintis, {1; CL}
+	; 1111 011w mod 010 r/m [poslinkis] – NOT registras/atmintis
+	; 1110 011w portas – OUT portas
+	; 1110 111w – OUT
+	; 1101 0111 – XLAT
+
 	
-	test al, 10000000b
-	jne not_recognised
+dissasemble_end:
+	ret
+dissasemble endp
+
+
+__mov proc
+	mov dx, offset mov_
+	call file_write
+	mov dx, offset endline
+	call file_write
 
 	jmp dissasemble_end
-not_recognised:
-	; mov ah, 9
-	; mov dx, offset not_recogn
-	; int 21h
+endp __mov
 
-	; ;; write to file
-	; call file_write
+__rcr proc
+	mov dx, offset rcr_
+	call file_write
+	mov dx, offset endline
+	call file_write
 
-dissasemble_end:
-    ret
-dissasemble endp
+	jmp dissasemble_end
+__rcr endp 
+
+__not proc
+	mov dx, offset not_
+	call file_write
+	mov dx, offset endline
+	call file_write
+
+	jmp dissasemble_end
+__not endp
+
+__out proc
+	mov dx, offset out_
+	call file_write
+	mov dx, offset endline
+	call file_write
+
+	jmp dissasemble_end
+ __out endp
+
+__xlat proc
+	mov dx, offset xlat_
+	call file_write
+	mov dx, offset endline
+	call file_write
+
+	jmp dissasemble_end
+__xlat endp
 
 
 
@@ -118,18 +172,19 @@ read_terminal proc near
 	mov al, byte ptr ds:[si]      
 	cmp al, 13                   
 	je _about
+
     ;; compare if there are '/?'
 	mov ax, word ptr ds:[si]
-	cmp ax, 3F2Fh                   ; jei nuskaityta " / ?" - 3F = '?'; 2F = ' / '
-	je _about                        ; ne rastas " / ?", vadinasi reikia inputo pabaiga
+	cmp ax, 3F2Fh                   
+	je _about                        
  
     ;; read com file name
     lea	di, com
-	call	file_readname		; perkelti is parametro i eilute source fila
+	call	file_readname	
 
     ;; read asm file name
     lea	di, asm
-	call	file_readname		; perkelti is parametro i eilute source fila
+	call	file_readname		
 
 	mov ax, @data
 	mov ds, ax
@@ -147,8 +202,8 @@ read_terminal proc near
 
 	;; open asm file for reading
 	mov dx, offset asm
-    call near ptr open_reading
-	mov asmHandle, bx      	
+    call near ptr open_printing
+	mov asmHandle, ax      	
 
     jmp input_end
 _about:
@@ -175,24 +230,22 @@ read_terminal endp
 
 
 open_reading PROC near
-	mov ah, 3Dh                     ; atidaro faila - komandos kodas
-	mov al, 0                       ; 0 - reading, 1 - writing, 2 - abu
-	int 21h                         ; INT 21h / AH= 3Dh - open existing file
-	jc err_open                   ; CF set on error AX = error code.
+	mov ah, 3Dh                     
+	mov al, 0                      
+	int 21h                         
+	jc err_open                  
     ret
 open_reading endp
 
 
 
 open_printing PROC near 
-	mov	ah, 3ch				        ; isvalo/sukuria faila - komandos kodas
+	mov	ah, 3ch				        
 	mov	cx, 0				        ; normal - no attributes
 	int	21h					        ; INT 21h / AH= 3Ch - create or truncate file.
-							        ;   Jei nebus isvalytas - tai perrasines senaji,
-							        ;   t.y. jei pries tai buves failas ilgesnis - like simboliai isliks.
 	jc	err_open
-	mov	ah, 3dh				        ; atidaro faila - komandos kodas
-	mov	al, 1				        ; rasymui
+	mov	ah, 3dh				        
+	mov	al, 1				        
 	int	21h					        ; INT 21h / AH= 3Dh - open existing file.
 	jc	err_open
     ret
@@ -218,48 +271,33 @@ file_readname PROC near
 	call skip_spaces
 
 file_readname_start:
-	cmp byte ptr ds:[si], 13      ; jei nera parametru
-	je file_readname_end         ; tai taip, tai baigtas failo vedimas
-	cmp byte ptr ds:[si], ' '     ; jei tarpas
-	jne file_readname_next       ; tai praleisti visus tarpus, ir sokti prie kito parametro
+	cmp byte ptr ds:[si], 13      
+	je file_readname_end         
+	cmp byte ptr ds:[si], ' '     
+	jne file_readname_next       
 
 file_readname_end:
-	mov al, '$'                  ; irasyti gale dolleri
+	mov al, '$'                  
 	stosb                        ; Store AL at address ES:(E)DI, di = di + 1
 	pop ax
 	ret
 
 file_readname_next:
-	lodsb                        ; uzkrauna kita simboli
+	lodsb                        
 	stosb                        ; Store AL at address ES:(E)DI, di = di + 1
 	jmp file_readname_start
 file_readname ENDP
 
 
-;; write stuff to file
-file_write proc
-	push ax
-	push cx
-
-	call strlen
-
-	mov ah, 40h
-	int  21h
-
-	pop ax
-	pop cx
-	ret
-file_write ENDP
-
 
 ;; get length of the string
 strlen proc
 	mov di, dx 			; in the di
-	mov al, '$' 		; search for dollar
-	mov cx, MAX_BUFF 	; maximum buffer size
+	mov al, '$' 		; search for endline
+	mov cx, 30 			; maximum word size
 	repnz scasb 		; search
 	sub di, dx 			; substract to get the distance 
-	sub di, 1 			; substract 1 to remove dollar sign
+	sub di, 1 			; substract 1 to remove endline sign
 	mov cx, di
 	ret
 strlen ENDP
