@@ -3,4 +3,4 @@
 
 # Run in DoxBox
 comp dis\
-dis mano.com kodas.asm\
+dis mano.com kodas.asm
