@@ -8,11 +8,6 @@ BSeg SEGMENT
 
 Pradzia:
 	MOV ax, dx
-	MOV ds, ax
-	RCR cl, 1
-	NOT cl
-	out dx, ax
-	xlat 
 
 BSeg ENDS
 

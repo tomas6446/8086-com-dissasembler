@@ -1,0 +1,1 @@
+MOV byte ptr [ bp + si ]MOV byte ptr [ bp + si ]
