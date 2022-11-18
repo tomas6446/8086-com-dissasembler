@@ -4,6 +4,7 @@
 
 .stack
 	MAX_BUFF 	EQU 10
+	JUMPS
 .data
 	about               db "Tomas Kozakas, 2 kursas, 1 grupe.", 10, 13, 'Programa disasembleris vercia masinini koda i assemblerio kalba.',  10, 13, 9, 'dis.exe mano.source kodas.destination$'	
 	err_op 			    db ' - nepavyko atidaryti', 13, 10, '$'
@@ -60,12 +61,29 @@
 	__minus				db ' - $'
 	__open_br			db '[ $'
 	__close_br			db ' ]$'
+	__comma				db ', $'
 
 	;;; INVALID COMMAND
 	__INVALID			db 'INVALID $'
 
 	string 				db 10 dup(0)
 	endline          	db 13, '$'
+
+
+	;; testing
+	__MOVimm			db 'MOVimm $'
+	__MOVmem_acc		db 'MOVmem_acc $'
+	__MOVacc_mem		db 'MOVacc_mem $'
+	__MOVsegreg_reg		db 'MOVsegreg_reg $'
+	__MOVreg_imm		db 'MOVreg_imm $'
+	__MOVreg_mem		db 'MOVreg_mem $'
+	__MOVmem_imm		db 'MOVmem_imm $'
+	__MOVSB				db 'MOVSB $'
+	__MOVSW				db 'MOVSW $'
+
+	__word				db '(word) $'
+	__byte				db '(byte) $'
+
 .code
 
 @@beginning:	
@@ -158,43 +176,6 @@ file_write proc near
 	pop cx 
 	ret
 file_write ENDP
-
-
-
-setupArg proc
-	test al, 00010000b
-	jnz	@@seg
-
-	mov dl, al
-	and dl, 00001100b
-	cmp dl, 00001100b
-	jne @@rm
-
-@@reg:
-	test al, 00000010b
-	jnz	@@regw
-
-@@regb:
-	call regb
-	jmp @@ret
-
-@@regw:
-	call regw
-	jmp @@ret
-
-@@seg:
-	call segm
-	jmp @@ret
-
-@@rm:
-	call rm
-
-@@ret:
-	mov dx, offset endline
-	call file_write
-
-	ret
-setupArg endp
 
 
 
@@ -391,7 +372,7 @@ regb proc
 
 		@@b00000001bff:
 			mov dx, offset __CL
-			;call addWord
+			call file_write
 			jmp @@returnb
 		@@b00000000bff:
 			mov dx, offset __AL
@@ -508,7 +489,7 @@ setupComm proc
 
 	test al, 10000000b
 	jnz @@c10000000c
-	jz 	@@INVALID
+	jz 	@@returnc
 	
 @@c10000000c:
 	test al, 01000000b
@@ -525,7 +506,6 @@ setupComm proc
 			jnz @@c11110000cfff
 			jz 	@@c11100000cfff
 
-			;; final bits
 			@@c11110000cfff: 
 				jmp @@NOT
 			@@c11100000cfff:
@@ -536,11 +516,17 @@ setupComm proc
 			jnz @@c11010000cfff
 			jz 	@@c11000000cfff
 
-			;; final bits
 			@@c11010000cfff:
 				jmp @@RCR
 			@@c11000000cfff:
-				jmp @@MOV
+				test al, 00001000b
+				jnz	@@c11001000cffff
+				jz	@@c11000000cffff
+
+				@@c11000000cffff:
+					jmp @@MOVmem_imm
+				@@c11001000cffff:
+					jmp @@INVALID
 
 	@@c10000000cf:
 		test al, 00100000b
@@ -552,26 +538,146 @@ setupComm proc
 			jnz @@c10110000cfff
 			jz 	@@c10100000cfff
 
-			;; final bits
 			@@c10110000cfff:
-				jmp @@MOV
+				jmp @@MOVimm
 			@@c10100000cfff:
-				jmp @@MOV
+				test al, 00000100b
+				jnz	@@c10100100cffff
+				jz	@@c10100000cffff
+
+				@@c10100100cffff:
+					test al, 0000010b
+					jnz	@@c10100110cfffff
+					jz	@@c10100100cfffff
+
+					@@c10100110cfffff:
+						jmp @@INVALID
+
+					@@c10100100cfffff:
+						test al, 00000001b
+						jnz @@c10100101cffffff
+						jz	@@c10100100cffffff
+
+						@@c10100101cffffff:
+							jmp @@MOVSW
+						@@c10100100cffffff:
+							jmp @@MOVSB
+				@@c10100000cffff:
+					test al, 00000010b
+					jnz @@c10100010cfffff
+					jz	@@c10100000cfffff
+
+					@@c10100010cfffff:
+						jmp @@MOVmem_acc
+					@@c10100000cfffff:
+						jmp @@MOVacc_mem
 
 		@@c10000000cff:
 			test al, 00010000b
 			jnz @@c10010000cfff
 			jz 	@@c10000000cfff
 
-			;; final bits
 			@@c10010000cfff:
 				jmp @@INVALID
 			@@c10000000cfff:
-				jmp @@MOV
+				test al, 00001000b
+				jnz @@c10001000cffff
+				jz	@@c10000000cffff
 
-@@MOV:
+				@@c10001000cffff:
+					test al, 00000100b
+					jnz	@@c10001100cfffff
+					jz	@@c10001000cfffff
+
+					@@c10001100cfffff:
+						jmp @@MOVseg_reg
+					@@c10001000cfffff:
+						test al, 00000010b
+						jnz @@c10001010cffffff
+						jz	@@c10001000cffffff
+
+						@@c10001010cffffff:
+							test al, 00000001b
+							jnz @@c10001011cfffffff
+							jz 	@@c10001010cfffffff
+
+							@@c10001011cfffffff:
+								jmp @@MOVreg_mem_w
+							@@c10001010cfffffff:
+								jmp @@MOVreg_mem_b
+						@@c10001000cffffff:
+							jmp @@INVALID
+
+				@@c10000000cffff:
+					jmp @@INVALID
+
+@@MOVmem_imm:
+	mov dx, offset __MOVmem_imm
+	call file_write
+
+	jmp @@returnc
+@@MOVimm:
+	mov dx, offset __MOVimm
+	call file_write
+
+	jmp @@returnc
+
+@@MOVacc_mem:
+	mov dx, offset __MOVacc_mem
+	call file_write
+
+	jmp @@returnc
+@@MOVmem_acc:
+	mov dx, offset __MOVmem_acc
+	call file_write
+
+	jmp @@returnc
+@@MOVSW:
+	mov dx, offset __MOVSW
+	call file_write	
+
+	jmp @@returnc
+@@MOVSB:
+	mov dx, offset __MOVSB
+	call file_write	
+
+	jmp @@returnc
+@@MOVseg_reg:
+	mov dx, offset __MOVsegreg_reg
+	call file_write
+
+	jmp @@returnc
+@@MOVreg_mem_b:
 	mov dx, offset __MOV
 	call file_write
+
+	lodsb
+	push ax
+	shr al, 3
+	call regb
+
+	mov dx, offset __comma
+	call file_write
+
+	pop ax
+	call regb
+
+	jmp @@returnc
+@@MOVreg_mem_w:
+	mov dx, offset __MOV
+	call file_write
+
+	lodsb
+	push ax
+	shr al, 3
+	call regw
+
+	mov dx, offset __comma
+	call file_write
+
+	pop ax
+	call regw
+
 	jmp @@returnc
 @@RCR:
 	mov dx, offset __RCR
@@ -591,6 +697,8 @@ setupComm proc
 	mov dx, offset endline
 	call file_write
 @@returnc:
+	mov dx, offset endline
+	call file_write
 	ret
 setupComm endp
 
@@ -599,9 +707,8 @@ dissasemble proc near
 	; inc	address
 	; mov dx, address
 	; call printHex
-
+	
 	call setupComm
-	call setupArg
 
 @@dissasemble_end:
 	ret
@@ -763,5 +870,4 @@ print_number proc
 print_number ENDP
 
 end @@beginning 
-
 
