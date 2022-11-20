@@ -7,8 +7,11 @@ BSeg SEGMENT
 	ASSUME ds:BSeg, cs:BSeg, ss:BSeg
 
 Pradzia:
-	MOV ax, dx
-
+	mov ax, dx
+	rcr ax, 1
+	mov cl, cl
+	mov cl, 12
+	mov bx, 123
 BSeg ENDS
 
 END	Pradzia		
