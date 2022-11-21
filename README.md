@@ -2,7 +2,7 @@
 8086-dissasembler
 
 # Run in DoxBox
-c dis\ 
+c dis\
 tasm mano\
 tlink mano\
 dis.exe mano.com kodas.asm
