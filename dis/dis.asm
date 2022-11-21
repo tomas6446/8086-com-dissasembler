@@ -6,11 +6,12 @@
 	MAX_BUFF 	EQU 10
 	JUMPS
 .data
-	about               db "Tomas Kozakas, 2 kursas, 1 grupe.", 10, 13, 'Programa disasembleris vercia masinini koda i assemblerio kalba.',  10, 13, 9, 'dis.exe mano.source kodas.destination$'	
+	about               db "Tomas Kozakas, 2 kursas, 1 grupe.", 10, 13
+						db 'Programa disasembleris vercia masinini koda i assemblerio kalba.', 10, 13, 9
+						db 'dis.exe mano.source kodas.destination$'
+
 	err_op 			    db ' - nepavyko atidaryti', 13, 10, '$'
 	err_re 				db 'nepavyko skaityti', 13, 10, '$'
-	
-	succ_op 			db ' - sekmingai atidarytas skaitymui', 13, 10, 13, 10, '$'
 
 	source     			db MAX_BUFF, ?, MAX_BUFF dup(0)
 	sourceHandle    	dw ?
@@ -18,14 +19,13 @@
 	destHandle			dw ?
 	buffer 				db MAX_BUFF dup(?)
 	
-	address				dw 100H
-	hex 				db "0123456789ABCDEF$"
+	address				dw 100h
+	hex					dw 0
 	operand				dw 0
 	prev_byte			db 0
 	mod_byte			db 0
 	
 	;;; COMMANDS
-	
 	__MOV				db 'mov $'
 	__RCR				db 'rcr $'
 	__NOT				db 'not $'
@@ -54,6 +54,7 @@
 	__BP				db 'bp$'
 	__SP				db 'sp$'
 	__BYTE_PTR			db 'byte ptr $'
+	__WORD_PTR			db 'word ptr $'
 	;; index
 	__SI				db 'si$'
 	__DI				db 'di$'
@@ -61,6 +62,7 @@
 	__ES				db 'es$'
 	__SS				db 'ss$'
 	__DS				db 'ds$'
+	__CS				db 'cs$'
 	;;; OPERATORS
 	__PLUS				db ' + $'
 	__MINUS				db ' - $'
@@ -72,9 +74,11 @@
 	;;; invalid COMMAND
 	__INVALID			db 'invalid $'
 
-	__WORD				db '(word) $'
-	__BYTE				db '(byte) $'
+	;__WORD				db '(word) $'
+	;__BYTE				db '(byte) $'
 
+	alignment9			db 9, '$'
+	alignment99			db 9, 9, '$'
 	string 				db 10 dup(0)
 	endline          	db 13, '$'
 
@@ -116,7 +120,7 @@ file_read proc near
 	mov si, dx
 @@repeat:
 	;; get one byte, store it in al
-	lodsb
+	call getByte
 	call dissasemble
 	loop @@repeat
 
@@ -133,29 +137,60 @@ file_read proc near
 file_read endp
 
 
+convertHex proc
+	mov cl, 2
+@@convert:
+	mov dl, bl
+	and dl, 00001111b
+	cmp dl, 9
+	ja 	@@toAscii
+	jbe @@putChar
+@@toAscii:
+	add dl, '0'
+@@putChar:
+	mov [si], dl
 
-; printHex proc
-; 	push si ax bx cx dx
-; 	mov bx, 10h
-; 	add di, cx
-; 	dec di
-; @@loop:
-; 	mov dx, 0000h
-; 	div bx
-; 	lea si, hex
-; 	add si, dx
-; 	mov dl, [si]
-; 	mov [di], dl
-; 	dec di
-; 	loop @@loop
+	shr bl, 4
+	dec si
+	dec cl
+	jnz @@convert
 
-; 	mov dx, di
-; 	call file_write
+	ret
+convertHex endp
 
-; 	pop si ax bx cx dx
-; 	ret
-; printHex endp
 
+setupHex proc
+	push ax cx si
+
+	mov ax, address
+
+	mov si, offset string + 9    	
+	mov byte ptr [si], '$'
+	
+	mov bl, al
+	call convertHex
+	mov bl, ah
+	call convertHex
+
+	mov ax, si 
+	call setupOperand
+
+	pop si cx ax
+	ret
+setupHex endp
+
+
+printAddress proc
+	call setupHex
+	
+	mov dx, offset __COLON
+	call file_write
+
+	mov dx, offset alignment9
+	call file_write
+
+	RET
+printAddress endp
 
 
 ;; write stuff to file
@@ -175,7 +210,7 @@ file_write ENDP
 
 
 segm proc
-	mov al, 00000010b
+	test al, 00000010b
 	jnz @@s00000010s
 	jz	@@s00000000s
 
@@ -185,7 +220,7 @@ segm proc
 	jz	@@s00000010sf
 
 	@@s00000011sf:
-		mov dx, offset __ES
+		mov dx, offset __DS
 		call file_write
 		jmp @@returnseg
 	@@s00000010sf:
@@ -198,11 +233,11 @@ segm proc
 	jz	@@s00000000sf
 	
 	@@s00000001sf:
-		mov dx, offset __SS
+		mov dx, offset __CS
 		call file_write
 		jmp @@returnseg
 	@@s00000000sf:
-		mov dx, offset __DS
+		mov dx, offset __ES
 		call file_write
 		jmp @@returnseg
 @@returnseg:
@@ -212,11 +247,19 @@ segm endp
 
 
 rm proc
-	test al, 00000010b
-	jnz @@r00000000m
+	test prev_byte, 00000001b
+	jnz	@@word_ptr
+	jz	@@byte_ptr
 
+@@word_ptr:
+	mov dx, offset __WORD_PTR
+	call file_write
+	jmp @@r00000000m
+@@byte_ptr:
 	mov dx, offset __BYTE_PTR
 	call file_write
+	jmp @@r00000000m
+	
 @@r00000000m:
 	mov dx, offset __open_br
 	call file_write
@@ -305,6 +348,19 @@ rm proc
 				call file_write
 				jmp @@continue
 @@continue:
+	;; shift flag (poslinkis)
+	cmp di, 1
+	jne @@putbr
+
+	mov dx, offset __PLUS
+	call file_write
+
+	push ax
+	call getByte
+	call setupOperand
+
+	pop ax
+@@putbr:
 	mov dx, offset __close_br
 	call file_write
 @@returnrm:
@@ -445,6 +501,7 @@ regb proc
 			mov dx, offset __AL
 			call file_write
 			jmp @@returnb
+
 	@@b00000010bf:
 		test al, 00000001b
 		jnz @@b00000011bff
@@ -463,22 +520,11 @@ regb proc
 regb endp
 
 
-setupComm proc
-	; 1000 10dw mod reg r/m [poslinkis] – MOV registras <=> registras/atmintis
-	; 1000 11d0 mod 0sr r/m [poslinkis] – MOV segmento registras <=> registras/atmintis
-	; 1010 000w adrjb adrvb – MOV akumuliatorius <= atmintis
-	; 1010 001w adrjb adrvb – MOV atmintis <= akumuliatorius
-	; 1010 010w – movsb; movsw
-	; 1011 wreg bojb [bovb] – MOV registras <= betarpiškas operandas
-	; 1100 011w mod 000 r/m [poslinkis] bojb [bovb] – MOV registras/atmintis <= betarpiškas
-	; 1101 00vw mod 011 r/m [poslinkis] – rcr registras/atmintis, {1; CL}
-	; 1111 011w mod 010 r/m [poslinkis] – not registras/atmintis
-	; 1110 011w portas – out portas
-	; 1110 111w – out
 
+setupComm proc
 	test al, 10000000b
 	jnz @@c10000000c
-	jz 	@@returnc
+	jz 	@@c00000000c
 	
 @@c10000000c:
 	test al, 01000000b
@@ -513,8 +559,7 @@ setupComm proc
 						jz 	@@c11110100cffffff
 
 						@@c11110110cffffff:
-							mov prev_byte, al
-							lodsb 	; get one more byte
+							call getByte
 							test al, 00100000b
 							jnz @@c11110110c00100000cff
 							jz	@@c11110110c00000000cff
@@ -546,8 +591,44 @@ setupComm proc
 						jmp @@invalid
 
 			@@c11100000cfff:
-				jmp @@out
+				test al, 00001000b
+				jnz	@@c11101000cffff
+				jz	@@c11100000cffff
 
+				@@c11101000cffff:
+					test al, 00000100b
+					jnz	@@c11101100cfffff
+					jz	@@c11101000cfffff
+					
+					@@c11101100cfffff:
+						test al, 00000010b
+						jnz	@@c11101110cffffff
+						jz	@@c11101100cffffff
+						
+						@@c11101110cffffff:
+							jmp @@out
+						@@c11101100cffffff:
+							jmp @@invalid
+
+					@@c11101000cfffff:
+						jmp @@invalid
+				@@c11100000cffff:
+					test al, 00000100b
+					jnz	@@c11100100cfffff
+					jz	@@c11100000cfffff
+
+					@@c11100100cfffff:
+						test al, 00000010b
+						jnz	@@c11100110cffffff
+						jz	@@c11100000cffffff
+
+						@@c11100110cffffff:
+							jmp @@out
+						@@c11100000cffffff:
+							jmp @@invalid
+
+					@@c11100000cfffff:
+						jmp @@invalid
 		@@c11000000cff:
 			test al, 00010000b
 			jnz @@c11010000cfff
@@ -568,29 +649,28 @@ setupComm proc
 					@@c11010100cfffff:
 						jmp @@invalid
 					@@c11010000cfffff:
-						mov prev_byte, al
-						lodsb
+						call getByte
 						test al, 00100000b
-						jnz	@@c11010000c00100000c
-						jz	@@c11010000c00000000c
+						jnz	@@c11010000c00100000cff
+						jz	@@c11010000c00000000cff
 
-						@@c11010000c00100000c:
+						@@c11010000c00100000cff:
 							jmp @@invalid
-						@@c11010000c00000000c:
+						@@c11010000c00000000cff:
 							test al, 00010000b
-							jnz	@@c11010000c00010000cf
-							jz	@@c11010000c00000000cf
+							jnz	@@c11010000c00010000cfff
+							jz	@@c11010000c00000000cfff
 
-							@@c11010000c00010000cf:
+							@@c11010000c00010000cfff:
 								test al, 00001000b
-								jnz	@@c11010000c00011000cff
-								jz	@@c11010000c00010000cff
+								jnz	@@c11010000c00011000cffff
+								jz	@@c11010000c00010000cffff
 
-								@@c11010000c00011000cff:
+								@@c11010000c00011000cffff:
 									jmp @@rcr
-								@@c11010000c00010000cff:
+								@@c11010000c00010000cffff:
 									jmp @@invalid
-							@@c11010000c00000000cf:
+							@@c11010000c00000000cfff:
 								jmp @@invalid
 			@@c11000000cfff:
 				test al, 00001000b
@@ -598,7 +678,44 @@ setupComm proc
 				jz	@@c11000000cffff
 
 				@@c11000000cffff:
-					jmp @@mov_mem_imm
+					test al, 00000100b
+					jnz	@@c11000100cfffff
+					jz	@@c11000000cfffff
+
+					@@c11000100cfffff:
+						test al, 00000010b
+						jnz	@@c11000110cffffff
+						jz	@@c11000100cffffff
+
+						@@c11000110cffffff:
+							mov prev_byte, al
+							lodsb
+							test al, 001000000b
+							jnz	@@c11000110c00100000cff
+							jz	@@c11000110c00000000cff
+
+							@@c11000110c00100000cff:
+								jmp @@invalid
+							@@c11000110c00000000cff:
+								test al, 00010000b
+								jnz	@@c11000110c00010000cfff 
+								jz	@@c11000110c00000000cfff
+
+								@@c11000110c00000000cfff:
+									test al, 00001000b
+									jnz	@@c11000110c00001000cffff 
+									jz	@@c11000110c00000000cffff
+
+									@@c11000110c00001000cffff:
+										jmp @@invalid
+									@@c11000110c00000000cffff:
+										jmp @@mov_rm_imm
+								@@c11000110c00010000cfff:
+									jmp @@invalid
+						@@c11000100cffffff:
+							jmp @@invalid
+					@@c11000000cfffff:
+						jmp @@invalid	
 				@@c11001000cffff:
 					jmp @@invalid
 
@@ -659,16 +776,32 @@ setupComm proc
 					jz	@@c10001000cfffff
 
 					@@c10001100cfffff:
-						jmp @@mov_seg_reg
+						test al, 00000010b
+						jnz	@@c10001110cffffff
+						jz	@@c10001100cffffff
+
+						@@c10001110cffffff:
+							jmp @@mov_seg_rm
+						@@c10001100cffffff:
+							jmp @@mov_rm_seg
+
 					@@c10001000cfffff:
 						test al, 00000010b
 						jnz @@c10001010cffffff
 						jz	@@c10001000cffffff
 
 						@@c10001010cffffff:
-							jmp @@mov_mem_reg
+							jmp @@mov_reg_rm
+
 						@@c10001000cffffff:
-							jmp @@mov_reg_mem
+							test al, 00000001b
+							jnz	@@c10001001cfffffff
+							jz	@@c10001000cfffffff
+
+							@@c10001001cfffffff:
+								jmp @@invalid
+							@@c10001000cfffffff:
+								jmp @@mov_rm_reg
 
 				@@c10000000cffff:
 					jmp @@invalid
@@ -700,53 +833,74 @@ setupComm proc
 			@@c00100000cfff:
 				jmp @@invalid
 		@@c00000000cff:
-			jmp @@invalid
+			test al, 00010000b
+			jnz @@c00010000cfff
+			jz	@@c00000000cfff
 
-@@mov_reg_mem:
-	test al, 00000001b
-	jnz	@@mov_reg_mem_w 
-	jz	@@mov_reg_mem_b	
+			@@c00010000cfff:
+			 	jmp @@invalid
+			@@c00000000cfff:
+				test al, 00001000b
+				jnz @@c00001000cffff
+				jz	@@c00000000cffff
 
-	@@mov_reg_mem_w:
+				@@c00001000cffff:
+					jmp @@invalid
+				@@c00000000cffff:
+					test al, 00000100b
+					jnz	@@c00000100cfffff
+					jz	@@c00000000cfffff
 
-	@@mov_reg_mem_b:
+					@@c00000100cfffff:
+						jmp @@invalid
+					@@c00000000cfffff:
+						test al, 00000010b
+						jnz @@c00000010cffffff
+						jz	@@c00000000cffffff
 
-	jmp @@returnc
+						@@c00000010cffffff:
+							jmp @@invalid
+						@@c00000000cffffff:
+							test al, 00000001b
+							jnz @@c00000001cfffffff
+							jz 	@@c00000000cfffffff
+
+							@@c00000001cfffffff:
+								jmp @@invalid
+							@@c00000000cfffffff:
+								jmp @@invalid 
 @@segm_change:
 	
-	jmp @@returnc
-@@mov_mem_imm:
-	
-	jmp @@returnc
+	jmp @@invalid
+@@mov_rm_imm:
+	mov dx, offset __MOV
+	call file_write
+
+	jmp @@invalid
 @@mov_reg_imm:
 	;1011 wreg bojb [bovb] – MOV registras <- betarpiškas operandas
 	mov dx, offset __MOV
 	call file_write
 
-	test al, 00001000b
-	jnz @@mov_reg_imm_w 
-	jz	@@mov_reg_imm_b 
+	mov prev_byte, al
+	mov mod_byte, 11000000b
+	shr prev_byte, 3
+	call setupArg
 
-	@@mov_reg_imm_w:
-		call regw
-		jmp @@comma
-	@@mov_reg_imm_b:
-		call regb
-	@@comma:
-		mov dx, offset __COMMA
-		call file_write
-	
-	lodsb
+	mov dx, offset __COMMA
+	call file_write
+
+	;; TODO 2 byte numbers
+	call getByte
 	call setupOperand
-	
+
 	jmp @@returnc
 @@mov_acc_mem:
 	
-
-	jmp @@returnc
+	jmp @@invalid
 @@mov_mem_acc:
 	
-	jmp @@returnc
+	jmp @@invalid
 @@movs:
 	; 1010 010w – movsb; movsw
 	test al, 00000001b
@@ -760,16 +914,52 @@ setupComm proc
 		mov dx, offset __MOVSB
 		call file_write	
 		jmp @@returnc
-@@mov_seg_reg:
-
-	jmp @@returnc
-@@mov_mem_reg:
+@@mov_seg_rm:
 	mov dx, offset __MOV
 	call file_write
 
-	mov prev_byte, al
-	lodsb
-	mov mod_byte, al
+	call getByte
+
+	push ax
+	;; shift middle bits to right
+	shr al, 3
+	call segm
+
+	mov dx, offset __COMMA
+	call file_write
+
+	pop ax
+	;; register is always 2 bytes type
+	; so make sure previous last bit is 1
+	or prev_byte, 00000001b 
+	call setupArg
+
+	jmp @@returnc
+@@mov_rm_seg:
+	mov dx, offset __MOV
+	call file_write
+
+	call getByte
+
+	;; register is always 2 bytes type
+	; so make sure previous last bit is 1
+	or prev_byte, 00000001b 
+	call setupArg
+
+	mov dx, offset __COMMA
+	call file_write
+
+	;; shift middle bits to right
+	shr al, 3
+	call segm
+	
+
+	jmp @@returnc
+@@mov_reg_rm:
+	mov dx, offset __MOV
+	call file_write
+
+	call getByte
 
 	push ax
 	shr al, 3
@@ -779,6 +969,21 @@ setupComm proc
 	call file_write
 	
 	pop ax
+	call setupArg
+
+	jmp @@returnc
+@@mov_rm_reg:
+	mov dx, offset __MOV
+	call file_write
+
+	call getByte
+	call setupArg
+
+	mov dx, offset __COMMA
+	call file_write
+
+	mov mod_byte, 11000000b
+	shr al, 3
 	call setupArg
 
 	jmp @@returnc
@@ -797,18 +1002,30 @@ setupComm proc
 	jnz	@@shiftcl
 	jz	@@shift1
 
-	
 	@@shiftcl:
 		mov dx, offset __CL
 		call file_write
 		jmp @@returnc
 	@@shift1:
 		mov ax, 1
-		call print_number
+		call setupOperand
 		jmp @@returnc
 @@out:
+	; 1110 011w portas – out portas
+	; 1110 111w – out
+
 	mov dx, offset __OUT
 	call file_write
+
+	mov dx, offset __DX
+	call file_write
+
+	mov dx, offset __COMMA
+	call file_write
+
+	mov dx, offset __AX
+	call file_write
+
 	jmp @@returnc
 @@not:
 	; 1111 011w mod 010 r/m [poslinkis] – NOT registras/atmintis
@@ -822,13 +1039,21 @@ setupComm proc
 @@invalid:
 	mov dx, offset __INVALID
 	call file_write
-	mov dx, offset endline
-	call file_write
 @@returnc:
 	mov dx, offset endline
 	call file_write
+	
 	ret
 setupComm endp
+
+
+getByte proc
+	inc address
+	mov prev_byte, al
+	lodsb
+	mov mod_byte, al
+	ret
+getByte endp
 
 
 setupArg proc
@@ -853,6 +1078,9 @@ setupArg proc
 				call regb
 				jmp @@ret
 		@@mod10bf:
+			;; shift_flag 1
+			mov di, 1 
+			call rm
 			jmp @@ret
 
 	@@mod00b:
@@ -861,8 +1089,13 @@ setupArg proc
 		jz	@@mod00bf
 
 		@@mod01bf:
+			;; shift_flag 1
+			mov di, 1
+			call rm
 			jmp @@ret
 		@@mod00bf:
+			;; shift_flag 0
+			mov di, 0
 			call rm
 			jmp @@ret
 @@ret:
@@ -870,13 +1103,35 @@ setupArg proc
 setupArg endp
 
 
-dissasemble proc near
-	; inc	address
-	; mov dx, address
-	; call printHex
+setupOperand proc
+	push si
+	mov si, offset string + 9    	; points to the last symbol
+	mov byte ptr [si], '$'       	; puts dollar sign at the end
 	
-	call setupComm
+	mov bx, 10                   	; divides bx by 10
+@@asc2:
+	xor dx, dx                   	; clears dx
+	div bx                       	; dx is remainder of ax / bx
+	add dx, '0'                  	; add 48
+	dec si                       	; take another char
+	mov [si], dl                 	; put number in si
+	
+	cmp ax, 0                    	; if ax is 0 (divided)
+	jz @@print                   	; end
+	jmp @@asc2                   	; take another char
+@@print:
+	mov dx, si
+	call file_write
+	pop si
+	ret
+setupOperand ENDP
 
+
+dissasemble proc near
+	call printAddress
+	; call printHex
+	call setupComm
+	
 @@dissasemble_end:
 	ret
 dissasemble endp
@@ -914,7 +1169,7 @@ read_terminal proc near
 
 	;; open destination file for reading
 	mov dx, offset destination
-    call near ptr open_printing
+    call near ptr open_writing
 	mov destHandle, ax      	
 
     jmp @@input_end
@@ -923,12 +1178,6 @@ read_terminal proc near
 	mov ah, 09h
 	int 21h
     jmp @@main_end
-@@succ_open:
-    mov ah, 9h
-    int 21h
-	mov dx, offset succ_op
-	int 21h
-    ret
 @@err_open:
     mov ah, 09h
 	int 21h
@@ -951,7 +1200,7 @@ open_reading endp
 
 
 
-open_printing PROC near 
+open_writing PROC near 
 	mov	ah, 3ch				        
 	mov	cx, 0				        
 	int	21h					        
@@ -961,8 +1210,7 @@ open_printing PROC near
 	int	21h					        
 	jc	@@err_open
     ret
-open_printing endp
-
+open_writing endp
 
 
 skip_spaces PROC near
@@ -977,7 +1225,6 @@ skip_spaces PROC near
 skip_spaces ENDP
 
 
-
 file_readname PROC near
 	push ax
 	call skip_spaces
@@ -987,13 +1234,11 @@ file_readname PROC near
 	je @@file_readname_end         
 	cmp byte ptr ds:[si], ' '     
 	jne @@file_readname_next       
-
 @@file_readname_end:
 	mov al, '$'                  
 	stosb                        ; store AL at address ES:(E)DI, di = di + 1
 	pop ax
 	ret
-
 @@file_readname_next:
 	lodsb                        
 	stosb                        ; store AL at address ES:(E)DI, di = di + 1
@@ -1001,60 +1246,18 @@ file_readname PROC near
 file_readname ENDP
 
 
-;; convert binary to dec
-setupOperand proc
-	push ax bx cx
-	mov ax, 1
-	mov bx, 2
-
-	mov     cx, 10
-    cwd               ;This puts zero in DX because AX holds a positive number
-@@mul:
-	mul bx
-
-    dec     cx
-    jnz     @@mul	
-	pop cx bx ax
-
-	call print_number
-	ret
-setupOperand endp
-
-
 ;; get length of the string
 strlen proc
-	mov di, dx 					; in the di
-	mov al, '$' 				; search for endline
-	mov cx, 30 					; maximum word size
-	repnz scasb 				; search
-	sub di, dx 					; substract to get the distance 
-	sub di, 1 					; substract 1 to remove endline sign
+	mov di, dx 						; in the di
+	mov al, '$' 					; search for endline
+	mov cx, 30 						; maximum word size
+	repnz scasb 					; search
+	sub di, dx 						; substract to get the distance 
+	sub di, 1 						; substract 1 to remove endline sign
 	mov cx, di
 	ret
 strlen ENDP
 
-print_number proc
-	push si
-	mov si, offset string + 9    ; nurodyti i paskutini simboli
-	mov byte ptr [si], '$'       ; kelti pabaigos simboli
-	
-	mov bx, 10                   ; dalinti reiksmes is 10
-@@asc2:
-	xor dx, dx                   ; isvalyti dx
-	div bx                       ; dx bus liekana is ax / bx
-	add dx, '0'                  ; prideti 48, kad paruosti simboli isvedimui
-	dec si                       ; imam kita simboli (decrementinam pointeri)
-	mov [si], dl                 ; padedam skaitmeni
-	
-	cmp ax, 0                    ; jei skaicius isdalintas
-	jz @@print                    ; tai einam i pabaiga
-	jmp @@asc2                     ; kitu atveju imam kita skaitmeni
-@@print:
-	mov dx, si
-	call file_write
-	pop si
-	ret
-print_number ENDP
 
 end @@beginning 
 
