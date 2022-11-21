@@ -1147,11 +1147,11 @@ read_terminal proc near
  
     ;; read source file name
     lea	di, source
-	call	file_readname	
+	call	read_name	
 
     ;; read destination file name
     lea	di, destination
-	call	file_readname		
+	call	read_name		
 
 	mov ax, @data
 	mov ds, ax
@@ -1225,25 +1225,25 @@ skip_spaces PROC near
 skip_spaces ENDP
 
 
-file_readname PROC near
+read_name PROC near
 	push ax
 	call skip_spaces
 
-@@file_readname_start:
+@@read_name_start:
 	cmp byte ptr ds:[si], 13      
-	je @@file_readname_end         
+	je @@read_name_end         
 	cmp byte ptr ds:[si], ' '     
-	jne @@file_readname_next       
-@@file_readname_end:
+	jne @@read_name_next       
+@@read_name_end:
 	mov al, '$'                  
 	stosb                        ; store AL at address ES:(E)DI, di = di + 1
 	pop ax
 	ret
-@@file_readname_next:
+@@read_name_next:
 	lodsb                        
 	stosb                        ; store AL at address ES:(E)DI, di = di + 1
-	jmp @@file_readname_start
-file_readname ENDP
+	jmp @@read_name_start
+read_name ENDP
 
 
 ;; get length of the string
