@@ -26,10 +26,10 @@
 # Key words
 bojb –  operand least significant byte\
 [bovb] – operand most significant byte, which is not mandatory\
-[shift] – shift, depends on mod value can be 1 or 2 bytes, or not exist at all;
-d - direction {0 = r/m <- reg; 1 = reg <- r/m}
-v - push size {0 = 1 bit; 1 = cl}
-w - operand size {0 = 1 byte; 1 = 2 bytes}
+[shift] – shift, depends on mod value can be 1 or 2 bytes, or not exist at all\
+d - direction {0 = r/m <- reg; 1 = reg <- r/m}\
+v - push size {0 = 1 bit; 1 = cl}\
+w - operand size {0 = 1 byte; 1 = 2 bytes}\
 
 
 # Run in DoxBox
