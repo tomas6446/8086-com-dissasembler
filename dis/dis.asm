@@ -3,12 +3,12 @@
 .model small
 
 .stack
-	MAX_BUFF 	EQU 10
+	MAX_BUFF 	EQU 100
 	JUMPS
 .data
 	about               db "Tomas Kozakas, 2 kursas, 1 grupe.", 10, 13
 						db 'Programa disasembleris vercia masinini koda i assemblerio kalba.', 10, 13, 9
-						db 'dis.exe mano.source kodas.destination$'
+						db 'dis.exe mano.source kodas.txt$'
 
 	err_op 			    db ' - nepavyko atidaryti', 13, 10, '$'
 	err_re 				db 'nepavyko skaityti', 13, 10, '$'
@@ -18,12 +18,18 @@
 	destination     	db MAX_BUFF, ?, MAX_BUFF dup(0)
 	destHandle			dw ?
 	buffer 				db MAX_BUFF dup(?)
+
 	
 	address				dw 100h
-	hex					dw 0
 	operand				dw 0
+	first_byte			db 0
 	prev_byte			db 0
 	mod_byte			db 0
+	sr_byte			db 0
+
+	shift_flag			db 0
+	srent_flag		db 0
+	memory_flag			db 1
 	
 	;;; COMMANDS
 	__MOV				db 'mov $'
@@ -58,7 +64,7 @@
 	;; index
 	__SI				db 'si$'
 	__DI				db 'di$'
-	;; segment
+	;; srent
 	__ES				db 'es$'
 	__SS				db 'ss$'
 	__DS				db 'ds$'
@@ -74,26 +80,22 @@
 	;;; invalid COMMAND
 	__INVALID			db 'invalid $'
 
-	;__WORD				db '(word) $'
-	;__BYTE				db '(byte) $'
 
 	alignment9			db 9, '$'
 	alignment99			db 9, 9, '$'
 	string 				db 10 dup(0)
 	endline          	db 13, '$'
-
-
+	char				db 1, '$'
 .code
-
 @@beginning:	
-	jmp near ptr main
+	jmp main
 
-main proc near
+main proc
     ;; open files
-    call near ptr read_terminal
+    call read_terminal
     
 	;; read source
-	call near ptr file_read
+	call readFile
 
 @@main_end:
 	;; return to dos
@@ -101,8 +103,9 @@ main proc near
     int 21h
 main endp
 
-
-file_read proc near
+;; WRITING & READING
+;##################
+readFile proc 
 @@new_buffer:
 	mov ah, 3Fh
 	mov dx, offset buffer
@@ -121,7 +124,8 @@ file_read proc near
 @@repeat:
 	;; get one byte, store it in al
 	call getByte
-	call dissasemble
+	mov first_byte, al
+	call defineInstruction
 	loop @@repeat
 
 	jmp @@new_buffer
@@ -134,1011 +138,10 @@ file_read proc near
 	mov ah, 3eh
 	int 21h
     ret
-file_read endp
+readFile endp
 
 
-convertHex proc
-	mov cl, 2
-@@convert:
-	mov dl, bl
-	and dl, 00001111b
-	cmp dl, 9
-	ja 	@@toAscii
-	jbe @@putChar
-@@toAscii:
-	add dl, '0'
-@@putChar:
-	mov [si], dl
-
-	shr bl, 4
-	dec si
-	dec cl
-	jnz @@convert
-
-	ret
-convertHex endp
-
-
-setupHex proc
-	push ax cx si
-
-	mov ax, address
-
-	mov si, offset string + 9    	
-	mov byte ptr [si], '$'
-	
-	mov bl, al
-	call convertHex
-	mov bl, ah
-	call convertHex
-
-	mov ax, si 
-	call setupOperand
-
-	pop si cx ax
-	ret
-setupHex endp
-
-
-printAddress proc
-	call setupHex
-	
-	mov dx, offset __COLON
-	call file_write
-
-	mov dx, offset alignment9
-	call file_write
-
-	RET
-printAddress endp
-
-
-;; write stuff to file
-file_write proc near
-	push ax cx
-
-	;; find length of string (store length in cx)
-	call strlen
-	mov ah, 40h
-	mov bx, destHandle
-	int  21h
-
-	pop cx ax
-	ret
-file_write ENDP
-
-
-
-segm proc
-	test al, 00000010b
-	jnz @@s00000010s
-	jz	@@s00000000s
-
-@@s00000010s:
-	test al, 00000001b
-	jnz	@@s00000011sf
-	jz	@@s00000010sf
-
-	@@s00000011sf:
-		mov dx, offset __DS
-		call file_write
-		jmp @@returnseg
-	@@s00000010sf:
-		mov dx, offset __SS
-		call file_write
-		jmp @@returnseg
-@@s00000000s:
-	test al, 00000001b
-	jnz	@@s00000001sf
-	jz	@@s00000000sf
-	
-	@@s00000001sf:
-		mov dx, offset __CS
-		call file_write
-		jmp @@returnseg
-	@@s00000000sf:
-		mov dx, offset __ES
-		call file_write
-		jmp @@returnseg
-@@returnseg:
-	ret
-segm endp
-
-
-
-rm proc
-	test prev_byte, 00000001b
-	jnz	@@word_ptr
-	jz	@@byte_ptr
-
-@@word_ptr:
-	mov dx, offset __WORD_PTR
-	call file_write
-	jmp @@r00000000m
-@@byte_ptr:
-	mov dx, offset __BYTE_PTR
-	call file_write
-	jmp @@r00000000m
-	
-@@r00000000m:
-	mov dx, offset __open_br
-	call file_write
-
-	test al, 00000100b
-	jnz	@@r00000100mf
-	jz 	@@r00000000mf
-
-	@@r00000100mf:
-		test al, 00000010b
-		jnz @@r00000110mff
-		jz	@@r00000100mff
-
-		@@r00000110mff:
-			test al, 00000001b
-			jnz @@r00000111mfff
-			jz 	@@r00000110mfff
-			
-			@@r00000111mfff:
-				mov dx, offset __BX
-				call file_write
-				jmp @@returnc
-			@@r00000110mfff:
-				mov dx, offset __BP
-				call file_write
-				jmp @@returnc
-
-		@@r00000100mff:
-			test al, 00000001b
-			jnz @@r00000101mfff
-			jz 	@@r00000100mfff
-
-			@@r00000101mfff:
-				mov dx, offset __DI
-				call file_write
-				jmp @@returnc
-			@@r00000100mfff:
-				mov dx, offset __SI
-				call file_write
-				jmp @@returnc
-	@@r00000000mf:
-		test al, 00000010b 
-		jnz @@r00000010mff
-		jz	@@r00000000mff
-
-		@@r00000010mff:
-			test al, 00000001b
-			jnz @@r00000011mfff
-			jz	@@r00000010mfff
-
-			@@r00000011mfff:
-				mov dx, offset __BP
-				call file_write
-				mov dx, offset __plus
-				call file_write
-				mov dx, offset __DI
-				call file_write
-				jmp @@continue
-			@@r00000010mfff:
-				mov dx, offset __BP
-				call file_write
-				mov dx, offset __plus
-				call file_write
-				mov dx, offset __SI
-				call file_write
-				jmp @@continue
-		@@r00000000mff:
-			test al, 00000001b
-			jnz @@r00000001mfff
-			jz	@@r00000000mfff
-
-			@@r00000001mfff:
-				mov dx, offset __BX
-				call file_write
-				mov dx, offset __plus
-				call file_write
-				mov dx, offset __DI
-				call file_write
-				jmp @@continue
-			@@r00000000mfff:
-				mov dx, offset __BP
-				call file_write
-				mov dx, offset __plus
-				call file_write
-				mov dx, offset __SI
-				call file_write
-				jmp @@continue
-@@continue:
-	;; shift flag (poslinkis)
-	cmp di, 1
-	jne @@putbr
-
-	mov dx, offset __PLUS
-	call file_write
-
-	push ax
-	call getByte
-	call setupOperand
-
-	pop ax
-@@putbr:
-	mov dx, offset __close_br
-	call file_write
-@@returnrm:
-	ret
-rm endp
-
-
-regw proc
-	test al, 00000100b
-	jnz @@w00000100w
-	jz	@@w00000000w
-	
-@@w00000100w:
-	test al, 00000010b
-	jnz @@w00000110wf
-	jz	@@w00000100wf
-
-	@@w00000110wf:
-		test al, 00000001b
-		jnz	@@w00000111wff
-		jz 	@@w00000110wff
-
-		@@w00000111wff:
-			mov dx, offset __DI
-			call file_write
-			jmp @@returnw
-
-		@@w00000110wff:
-			mov dx, offset __SI
-			call file_write
-			jmp @@returnw
-
-	@@w00000100wf:
-		test al, 00000001b
-		jnz @@w00000101wff
-		jz 	@@w00000100wff
-
-		@@w00000101wff:
-			mov dx, offset __BP
-			call file_write
-			jmp @@returnw
-
-		@@w00000100wff:
-			mov dx, offset __SP
-			call file_write
-			jmp @@returnw
-
-@@w00000000w:
-	test al, 00000010b
-	jnz @@w00000010wf
-	jz	@@w00000000wf
-
-	@@w00000000wf:
-		test al, 00000001b
-		jnz	@@w00000001wff
-		jz	@@w00000000wff
-
-		@@w00000001wff:
-			mov dx, offset __CX
-			call file_write
-			jmp @@returnw
-		@@w00000000wff:
-			mov dx, offset __AX
-			call file_write
-			jmp @@returnw
-	@@w00000010wf:
-		test al, 00000001b
-		jnz @@w00000011wff
-		jz 	@@w00000010wff
-
-		@@w00000011wff:
-			mov dx, offset __BX
-			call file_write
-			jmp @@returnw
-		@@w00000010wff:
-			mov dx, offset __DX
-			call file_write
-			jmp @@returnw
-@@returnw:
-	ret
-regw endp
-
-regb proc
-	test al, 00000100b
-	jnz @@b00000100b
-	jz	@@b00000000b
-	
-@@b00000100b:
-	test al, 00000010b
-	jnz @@b00000110bf
-	jz	@@b00000100bf
-
-	@@b00000110bf:
-		test al, 00000001b
-		jnz	@@b00000111bff
-		jz 	@@b00000110bff
-
-		@@b00000111bff:
-			mov dx, offset __BH
-			call file_write
-			jmp @@returnb
-
-		@@b00000110bff:
-			mov dx, offset __DH
-			call file_write
-			jmp @@returnb
-
-	@@b00000100bf:
-		test al, 00000001b
-		jnz @@b00000101bff
-		jz 	@@b00000100bff
-
-		@@b00000101bff:
-			mov dx, offset __CH
-			call file_write
-			jmp @@returnb
-
-		@@b00000100bff:
-			mov dx, offset __AH
-			call file_write
-			jmp @@returnb
-
-@@b00000000b:
-	test al, 00000010b
-	jnz @@b00000010bf
-	jz	@@b00000000bf
-
-	@@b00000000bf:
-		test al, 00000001b
-		jnz	@@b00000001bff
-		jz	@@b00000000bff
-
-		@@b00000001bff:
-			mov dx, offset __CL
-			call file_write
-			jmp @@returnb
-		@@b00000000bff:
-			mov dx, offset __AL
-			call file_write
-			jmp @@returnb
-
-	@@b00000010bf:
-		test al, 00000001b
-		jnz @@b00000011bff
-		jz 	@@b00000010bff
-
-		@@b00000011bff:
-			mov dx, offset __BL
-			call file_write
-			jmp @@returnb
-		@@b00000010bff:
-			mov dx, offset __DL
-			call file_write
-			jmp @@returnb
-@@returnb:
-	ret
-regb endp
-
-
-
-setupComm proc
-	test al, 10000000b
-	jnz @@c10000000c
-	jz 	@@c00000000c
-	
-@@c10000000c:
-	test al, 01000000b
-	jnz @@c11000000cf
-	jz  @@c10000000cf
-
-	@@c11000000cf:
-		test al, 00100000b
-		jnz @@c11100000cff
-		jz	@@c11000000cff
-
-		@@c11100000cff:
-			test al, 00010000b
-			jnz @@c11110000cfff
-			jz 	@@c11100000cfff
-
-			@@c11110000cfff: 
-				test al, 00001000b
-				jnz	@@c11111000cffff
-				jz	@@c11110000cffff
-
-				@@c11111000cffff:
-					jmp @@invalid
-				@@c11110000cffff:
-					test al, 00000100b
-					jnz	@@c11110100cfffff
-					jz	@@c11110000cfffff
-
-					@@c11110100cfffff:
-						test al, 00000010b
-						jnz @@c11110110cffffff
-						jz 	@@c11110100cffffff
-
-						@@c11110110cffffff:
-							call getByte
-							test al, 00100000b
-							jnz @@c11110110c00100000cff
-							jz	@@c11110110c00000000cff
-
-							@@c11110110c00100000cff:
-								jmp @@invalid
-							@@c11110110c00000000cff:
-								test al, 00010000b
-								jnz @@c11110110c00010000cfff
-								jz	@@c11110110c00000000cfff
-							
-								@@c11110110c00010000cfff:
-									test al, 00001000b
-									jnz @@c11110110c00011000cffff
-									jz	@@c11110110c00010000cffff
-
-									@@c11110110c00011000cffff:
-										jmp @@invalid
-									@@c11110110c00010000cffff:
-										jmp @@not
-									
-								@@c11110110c00000000cfff:
-									jmp @@invalid
-
-						@@c11110100cffffff:
-							jmp @@invalid
-
-					@@c11110000cfffff:
-						jmp @@invalid
-
-			@@c11100000cfff:
-				test al, 00001000b
-				jnz	@@c11101000cffff
-				jz	@@c11100000cffff
-
-				@@c11101000cffff:
-					test al, 00000100b
-					jnz	@@c11101100cfffff
-					jz	@@c11101000cfffff
-					
-					@@c11101100cfffff:
-						test al, 00000010b
-						jnz	@@c11101110cffffff
-						jz	@@c11101100cffffff
-						
-						@@c11101110cffffff:
-							jmp @@out
-						@@c11101100cffffff:
-							jmp @@invalid
-
-					@@c11101000cfffff:
-						jmp @@invalid
-				@@c11100000cffff:
-					test al, 00000100b
-					jnz	@@c11100100cfffff
-					jz	@@c11100000cfffff
-
-					@@c11100100cfffff:
-						test al, 00000010b
-						jnz	@@c11100110cffffff
-						jz	@@c11100000cffffff
-
-						@@c11100110cffffff:
-							jmp @@out
-						@@c11100000cffffff:
-							jmp @@invalid
-
-					@@c11100000cfffff:
-						jmp @@invalid
-		@@c11000000cff:
-			test al, 00010000b
-			jnz @@c11010000cfff
-			jz 	@@c11000000cfff
-
-			@@c11010000cfff:
-				test al, 00001000b
-				jnz	@@c11011000cffff
-				jz	@@c11010000cffff
-
-				@@c11011000cffff:
-					jmp @@invalid
-				@@c11010000cffff:
-					test al, 00000100b
-					jnz	@@c11010100cfffff
-					jz	@@c11010000cfffff
-
-					@@c11010100cfffff:
-						jmp @@invalid
-					@@c11010000cfffff:
-						call getByte
-						test al, 00100000b
-						jnz	@@c11010000c00100000cff
-						jz	@@c11010000c00000000cff
-
-						@@c11010000c00100000cff:
-							jmp @@invalid
-						@@c11010000c00000000cff:
-							test al, 00010000b
-							jnz	@@c11010000c00010000cfff
-							jz	@@c11010000c00000000cfff
-
-							@@c11010000c00010000cfff:
-								test al, 00001000b
-								jnz	@@c11010000c00011000cffff
-								jz	@@c11010000c00010000cffff
-
-								@@c11010000c00011000cffff:
-									jmp @@rcr
-								@@c11010000c00010000cffff:
-									jmp @@invalid
-							@@c11010000c00000000cfff:
-								jmp @@invalid
-			@@c11000000cfff:
-				test al, 00001000b
-				jnz	@@c11001000cffff
-				jz	@@c11000000cffff
-
-				@@c11000000cffff:
-					test al, 00000100b
-					jnz	@@c11000100cfffff
-					jz	@@c11000000cfffff
-
-					@@c11000100cfffff:
-						test al, 00000010b
-						jnz	@@c11000110cffffff
-						jz	@@c11000100cffffff
-
-						@@c11000110cffffff:
-							mov prev_byte, al
-							lodsb
-							test al, 001000000b
-							jnz	@@c11000110c00100000cff
-							jz	@@c11000110c00000000cff
-
-							@@c11000110c00100000cff:
-								jmp @@invalid
-							@@c11000110c00000000cff:
-								test al, 00010000b
-								jnz	@@c11000110c00010000cfff 
-								jz	@@c11000110c00000000cfff
-
-								@@c11000110c00000000cfff:
-									test al, 00001000b
-									jnz	@@c11000110c00001000cffff 
-									jz	@@c11000110c00000000cffff
-
-									@@c11000110c00001000cffff:
-										jmp @@invalid
-									@@c11000110c00000000cffff:
-										jmp @@mov_rm_imm
-								@@c11000110c00010000cfff:
-									jmp @@invalid
-						@@c11000100cffffff:
-							jmp @@invalid
-					@@c11000000cfffff:
-						jmp @@invalid	
-				@@c11001000cffff:
-					jmp @@invalid
-
-	@@c10000000cf:
-		test al, 00100000b
-		jnz @@c10100000cff
-		jz	@@c10000000cff
-
-		@@c10100000cff:
-			test al, 00010000b
-			jnz @@c10110000cfff
-			jz 	@@c10100000cfff
-
-			@@c10110000cfff:
-				jmp @@mov_reg_imm
-		
-			@@c10100000cfff:
-				test al, 00000100b
-				jnz	@@c10100100cffff
-				jz	@@c10100000cffff
-
-				@@c10100100cffff:
-					test al, 0000010b
-					jnz	@@c10100110cfffff
-					jz	@@c10100100cfffff
-
-					@@c10100110cfffff:
-						jmp @@invalid
-
-					@@c10100100cfffff:
-						jmp @@movs
-
-				@@c10100000cffff:
-					test al, 00000010b
-					jnz @@c10100010cfffff
-					jz	@@c10100000cfffff
-
-					@@c10100010cfffff:
-						jmp @@mov_mem_acc
-					@@c10100000cfffff:
-						jmp @@mov_acc_mem
-
-		@@c10000000cff:
-			test al, 00010000b
-			jnz @@c10010000cfff
-			jz 	@@c10000000cfff
-
-			@@c10010000cfff:
-				jmp @@invalid
-			@@c10000000cfff:
-				test al, 00001000b
-				jnz @@c10001000cffff
-				jz	@@c10000000cffff
-
-				@@c10001000cffff:
-					test al, 00000100b
-					jnz	@@c10001100cfffff
-					jz	@@c10001000cfffff
-
-					@@c10001100cfffff:
-						test al, 00000010b
-						jnz	@@c10001110cffffff
-						jz	@@c10001100cffffff
-
-						@@c10001110cffffff:
-							jmp @@mov_seg_rm
-						@@c10001100cffffff:
-							jmp @@mov_rm_seg
-
-					@@c10001000cfffff:
-						test al, 00000010b
-						jnz @@c10001010cffffff
-						jz	@@c10001000cffffff
-
-						@@c10001010cffffff:
-							jmp @@mov_reg_rm
-
-						@@c10001000cffffff:
-							test al, 00000001b
-							jnz	@@c10001001cfffffff
-							jz	@@c10001000cfffffff
-
-							@@c10001001cfffffff:
-								jmp @@invalid
-							@@c10001000cfffffff:
-								jmp @@mov_rm_reg
-
-				@@c10000000cffff:
-					jmp @@invalid
-@@c00000000c:
-	test al, 01000000b
-	jnz	@@c01000000cf
-	jz	@@c00000000cf
-
-	@@c01000000cf:
-		jmp @@invalid
-	@@c00000000cf:
-		test al, 00100000b
-		jnz @@c00100000cff
-		jz 	@@c00000000cff
-
-		@@c00100000cff:
-			test al, 00000100b
-			jnz @@c00100100cfff
-			jz 	@@c00100000cfff
-			@@c00100100cfff:
-				test al, 00000010b
-				jnz	@@c00100110cffff
-				jz	@@c00100100cffff
-
-				@@c00100110cffff:
-					jmp @@segm_change
-				@@c00100100cffff:
-					jmp @@invalid
-			@@c00100000cfff:
-				jmp @@invalid
-		@@c00000000cff:
-			test al, 00010000b
-			jnz @@c00010000cfff
-			jz	@@c00000000cfff
-
-			@@c00010000cfff:
-			 	jmp @@invalid
-			@@c00000000cfff:
-				test al, 00001000b
-				jnz @@c00001000cffff
-				jz	@@c00000000cffff
-
-				@@c00001000cffff:
-					jmp @@invalid
-				@@c00000000cffff:
-					test al, 00000100b
-					jnz	@@c00000100cfffff
-					jz	@@c00000000cfffff
-
-					@@c00000100cfffff:
-						jmp @@invalid
-					@@c00000000cfffff:
-						test al, 00000010b
-						jnz @@c00000010cffffff
-						jz	@@c00000000cffffff
-
-						@@c00000010cffffff:
-							jmp @@invalid
-						@@c00000000cffffff:
-							test al, 00000001b
-							jnz @@c00000001cfffffff
-							jz 	@@c00000000cfffffff
-
-							@@c00000001cfffffff:
-								jmp @@invalid
-							@@c00000000cfffffff:
-								jmp @@invalid 
-@@segm_change:
-	
-	jmp @@invalid
-@@mov_rm_imm:
-	mov dx, offset __MOV
-	call file_write
-
-	jmp @@invalid
-@@mov_reg_imm:
-	;1011 wreg bojb [bovb] – MOV registras <- betarpiškas operandas
-	mov dx, offset __MOV
-	call file_write
-
-	mov prev_byte, al
-	mov mod_byte, 11000000b
-	shr prev_byte, 3
-	call setupArg
-
-	mov dx, offset __COMMA
-	call file_write
-
-	;; TODO 2 byte numbers
-	call getByte
-	call setupOperand
-
-	jmp @@returnc
-@@mov_acc_mem:
-	
-	jmp @@invalid
-@@mov_mem_acc:
-	
-	jmp @@invalid
-@@movs:
-	; 1010 010w – movsb; movsw
-	test al, 00000001b
-	jnz @@movsw
-	jz	@@movsb
-	@@movsw:
-		mov dx, offset __MOVSW
-		call file_write	
-		jmp @@returnc
-	@@movsb:
-		mov dx, offset __MOVSB
-		call file_write	
-		jmp @@returnc
-@@mov_seg_rm:
-	mov dx, offset __MOV
-	call file_write
-
-	call getByte
-
-	push ax
-	;; shift middle bits to right
-	shr al, 3
-	call segm
-
-	mov dx, offset __COMMA
-	call file_write
-
-	pop ax
-	;; register is always 2 bytes type
-	; so make sure previous last bit is 1
-	or prev_byte, 00000001b 
-	call setupArg
-
-	jmp @@returnc
-@@mov_rm_seg:
-	mov dx, offset __MOV
-	call file_write
-
-	call getByte
-
-	;; register is always 2 bytes type
-	; so make sure previous last bit is 1
-	or prev_byte, 00000001b 
-	call setupArg
-
-	mov dx, offset __COMMA
-	call file_write
-
-	;; shift middle bits to right
-	shr al, 3
-	call segm
-	
-
-	jmp @@returnc
-@@mov_reg_rm:
-	mov dx, offset __MOV
-	call file_write
-
-	call getByte
-
-	push ax
-	shr al, 3
-	call setupArg
-
-	mov dx, offset __COMMA
-	call file_write
-	
-	pop ax
-	call setupArg
-
-	jmp @@returnc
-@@mov_rm_reg:
-	mov dx, offset __MOV
-	call file_write
-
-	call getByte
-	call setupArg
-
-	mov dx, offset __COMMA
-	call file_write
-
-	mov mod_byte, 11000000b
-	shr al, 3
-	call setupArg
-
-	jmp @@returnc
-@@rcr:
-	; 1101 00vw mod 011 r/m [poslinkis] – RCR registras/atmintis, {1; CL}
-	mov dx, offset __RCR
-	call file_write
-
-	mov mod_byte, al
-	call setupArg
-
-	mov dx, offset __COMMA
-	call file_write
-
-	test prev_byte, 00000010b
-	jnz	@@shiftcl
-	jz	@@shift1
-
-	@@shiftcl:
-		mov dx, offset __CL
-		call file_write
-		jmp @@returnc
-	@@shift1:
-		mov ax, 1
-		call setupOperand
-		jmp @@returnc
-@@out:
-	; 1110 011w portas – out portas
-	; 1110 111w – out
-
-	mov dx, offset __OUT
-	call file_write
-
-	mov dx, offset __DX
-	call file_write
-
-	mov dx, offset __COMMA
-	call file_write
-
-	mov dx, offset __AX
-	call file_write
-
-	jmp @@returnc
-@@not:
-	; 1111 011w mod 010 r/m [poslinkis] – NOT registras/atmintis
-	mov dx, offset __NOT
-	call file_write
-
-	mov mod_byte, al
-	call setupArg
-
-	jmp @@returnc
-@@invalid:
-	mov dx, offset __INVALID
-	call file_write
-@@returnc:
-	mov dx, offset endline
-	call file_write
-	
-	ret
-setupComm endp
-
-
-getByte proc
-	inc address
-	mov prev_byte, al
-	lodsb
-	mov mod_byte, al
-	ret
-getByte endp
-
-
-setupArg proc
-	test mod_byte, 10000000b
-	jnz	@@mod10b
-	jz	@@mod00b
-
-	@@mod10b:	
-		test mod_byte, 01000000b
-		jnz	@@mod11bf
-		jz	@@mod10bf
-
-		@@mod11bf:
-			test prev_byte, 00000001b
-			jnz	@@words
-			jz	@@bytes
-
-			@@words:	
-				call regw
-				jmp @@ret
-			@@bytes:
-				call regb
-				jmp @@ret
-		@@mod10bf:
-			;; shift_flag 1
-			mov di, 1 
-			call rm
-			jmp @@ret
-
-	@@mod00b:
-		test mod_byte, 01000000b
-		jnz	@@mod01bf
-		jz	@@mod00bf
-
-		@@mod01bf:
-			;; shift_flag 1
-			mov di, 1
-			call rm
-			jmp @@ret
-		@@mod00bf:
-			;; shift_flag 0
-			mov di, 0
-			call rm
-			jmp @@ret
-@@ret:
-	ret
-setupArg endp
-
-
-setupOperand proc
-	push si
-	mov si, offset string + 9    	; points to the last symbol
-	mov byte ptr [si], '$'       	; puts dollar sign at the end
-	
-	mov bx, 10                   	; divides bx by 10
-@@asc2:
-	xor dx, dx                   	; clears dx
-	div bx                       	; dx is remainder of ax / bx
-	add dx, '0'                  	; add 48
-	dec si                       	; take another char
-	mov [si], dl                 	; put number in si
-	
-	cmp ax, 0                    	; if ax is 0 (divided)
-	jz @@print                   	; end
-	jmp @@asc2                   	; take another char
-@@print:
-	mov dx, si
-	call file_write
-	pop si
-	ret
-setupOperand ENDP
-
-
-dissasemble proc near
-	call printAddress
-	; call printHex
-	call setupComm
-	
-@@dissasemble_end:
-	ret
-dissasemble endp
-
-
-
-read_terminal proc near
+read_terminal proc
 	mov ax, @data
 	mov es, ax 
 
@@ -1147,11 +150,11 @@ read_terminal proc near
  
     ;; read source file name
     lea	di, source
-	call	read_name	
+	call	read_filename	
 
     ;; read destination file name
     lea	di, destination
-	call	read_name		
+	call	read_filename		
 
 	mov ax, @data
 	mov ds, ax
@@ -1188,9 +191,8 @@ read_terminal proc near
     ret
 read_terminal endp
 
-
-
-open_reading PROC near
+;; opens file for reading
+open_reading proc
 	mov ah, 3Dh                     
 	mov al, 0                      
 	int 21h                         
@@ -1198,9 +200,8 @@ open_reading PROC near
     ret
 open_reading endp
 
-
-
-open_writing PROC near 
+;; opens file for writing
+open_writing proc 
 	mov	ah, 3ch				        
 	mov	cx, 0				        
 	int	21h					        
@@ -1224,11 +225,10 @@ skip_spaces PROC near
 	ret
 skip_spaces ENDP
 
-
-read_name PROC near
-	push ax
+;; read file name from termnial
+read_filename PROC near
+	push ax di
 	call skip_spaces
-
 @@read_name_start:
 	cmp byte ptr ds:[si], 13      
 	je @@read_name_end         
@@ -1237,17 +237,130 @@ read_name PROC near
 @@read_name_end:
 	mov al, '$'                  
 	stosb                        ; store AL at address ES:(E)DI, di = di + 1
-	pop ax
+	pop di ax
 	ret
 @@read_name_next:
 	lodsb                        
 	stosb                        ; store AL at address ES:(E)DI, di = di + 1
 	jmp @@read_name_start
-read_name ENDP
+read_filename ENDP
 
+
+writeHex proc
+	push cx bx si
+
+	xor dx, dx
+	mov cx,	4        		; print 4 hex digits (= 16 bits)
+@@move_bits:
+	rol ax, 4   			; move the currently left-most digit into the least significant 4 bits
+	mov dl, al
+	and dl, 00001111b  		; isolate the hex digit we want to print
+	cmp dl, 9
+	jbe @@print_digit
+	add dl, 7    			; ... (for 'A'..'F')
+	add dl, '0'  			; and convert it into a character
+@@print_letter:
+	push ax
+
+	mov si, offset char		; point si to char
+	mov [si], dl			; put at the start of char with dollar at the end
+	mov dx, si	
+	call writeFile			; print character		
+
+	pop ax
+	jmp @@next
+@@print_digit:   
+	push ax
+
+	xor ah, ah				; clear ah
+	mov al, dl		 
+	call writeNumber		; print digits
+	
+	pop ax
+@@next:
+	loop @@move_bits
+
+	pop si bx cx
+	ret
+writeHex endp
+
+
+writeNumber proc
+	push si bx
+	mov si, offset string + 9    	; points to the last symbol
+	mov byte ptr [si], '$'       	; puts dollar sign at the end
+	
+	mov bx, 10                   	; divides bx by 10
+@@asc2:
+	xor dx, dx                   	; clears dx
+	div bx                       	; dx is remainder of ax / bx
+	add dx, '0'                  	; add 48
+	dec si                       	; take another char
+	mov [si], dl                 	; put number in si
+	
+	cmp ax, 0                    	; if ax is 0 (divided)
+	jz @@print                   	; end
+	jmp @@asc2                   	; take another char
+@@print:
+	mov dx, si
+	call writeFile
+	pop bx si
+	ret
+writeNumber ENDP
+
+
+writeAddress proc
+	push ax
+	mov ax, address
+	call writeHex
+	
+	mov dx, offset __COLON
+	call writeFile
+
+	mov dx, offset alignment9
+	call writeFile
+
+	pop ax
+	ret
+writeAddress endp
+
+
+;; write stuff to file
+writeFile proc
+	push ax cx bx
+
+	;; find length of string (store length in cx)
+	call strlen
+	mov ah, 40h
+	mov bx, destHandle
+	int  21h
+
+	pop bx cx ax
+	ret
+writeFile ENDP
+;#######################
+
+
+;; saves previous byte
+getByte proc
+	inc address
+	mov prev_byte, al
+	lodsb
+	mov mod_byte, al
+	ret
+getByte endp
+
+;; used to get 2 bytes
+getWord proc
+	inc address
+	inc address
+	lodsw
+	ret
+getWord endp
 
 ;; get length of the string
 strlen proc
+	push di
 	mov di, dx 						; in the di
 	mov al, '$' 					; search for endline
 	mov cx, 30 						; maximum word size
@@ -1255,8 +368,1066 @@ strlen proc
 	sub di, dx 						; substract to get the distance 
 	sub di, 1 						; substract 1 to remove endline sign
 	mov cx, di
+	pop di
 	ret
 strlen ENDP
+
+
+
+
+;###############################
+mods proc
+	test mod_byte, 10000000b
+	jnz	@@mod10b
+	jz	@@mod00b
+
+	@@mod10b:	
+		test mod_byte, 01000000b
+		jnz	@@mod11bf
+		jz	@@mod10bf
+
+		@@mod11bf:
+			call d_regreg
+			jmp @@ret 
+		@@mod10bf:
+			mov shift_flag, 2 
+			mov memory_flag, 1
+			call d_rmreg
+			jmp @@ret
+
+	@@mod00b:
+		test mod_byte, 01000000b
+		jnz	@@mod01bf
+		jz	@@mod00bf
+
+		@@mod01bf:
+			mov shift_flag, 1
+			mov memory_flag, 1
+			call d_rmreg
+			jmp @@ret
+		@@mod00bf:
+			mov shift_flag, 0
+			mov memory_flag, 1
+			call d_rmreg
+			jmp @@ret
+@@ret:
+	ret
+mods endp
+
+
+
+memory proc
+	mov dx, offset __open_br
+	call writeFile
+
+	call w
+	call writeHex
+
+	mov dx, offset __close_br
+	call writeFile
+
+	ret
+memory endp
+
+
+acc proc
+	test first_byte, 00000001b
+	jnz	@@w
+	jz	@@b
+
+	@@w:
+		mov dx, offset __AX
+		jmp @@returnacc
+	@@b:
+		mov dx, offset __AL
+@@returnacc:
+	call writeFile
+	ret
+acc endp
+
+
+port proc
+	test first_byte, 00001000b
+	jnz	@@nport
+	jz	@@port
+
+	@@nport:
+		mov dx, offset __DX
+		call writeFile
+		jmp @@size
+	@@port:
+		call getByte
+		call writeNumber
+
+		mov al, prev_byte
+	@@size:
+		mov dx, offset __COMMA
+		call writeFile
+
+		call acc
+
+	ret
+port endp
+
+
+reg proc
+	test first_byte, 00000001b
+	jz	@@bytes
+	
+	call regw
+	jmp @@returnreg
+@@bytes:
+	call regb
+@@returnreg:
+	ret
+reg endp
+
+
+w proc
+	test first_byte, 00000001b
+	jz 	@@getByte
+
+	call getWord
+	jmp @@returnw
+@@getByte:
+	call getByte
+@@returnwb:
+	ret
+w endp
+
+
+
+d_rmreg proc
+	test first_byte, 00000010b
+	jnz	@@reg
+	jz	@@rm
+
+	@@reg:
+		push ax
+		shr al, 3
+		call reg
+		pop ax
+		jmp @@returnd
+	@@rm:
+		call rm
+@@returnd:
+	ret
+d_rmreg endp
+
+
+d_segregw proc
+	test first_byte, 00000010b
+	jnz	@@seg_rm
+	jz	@@rm_seg
+
+	@@seg_rm:
+		push ax
+		shr al, 3
+		call sr
+		pop ax
+		jmp @@returns
+	@@rm_seg:
+		call regw
+@@returns:
+	ret
+d_segregw endp
+
+
+
+d_regreg proc
+	test first_byte, 00000010b
+	jnz	@@regl_reg
+	jz	@@reg_regl
+
+	@@regl_reg:
+		push ax
+		shr al, 3
+		call reg
+		pop ax
+		jmp @@returnr
+	@@reg_regl:
+		call reg
+@@returnr:
+	ret
+d_regreg endp
+
+
+d_accmem proc
+	test first_byte, 00000010b
+	jnz	@@mem
+	jz	@@acc
+	
+	@@acc:	
+		call acc
+		jmp @@returnaccmem
+	@@mem:
+		call memory
+@@returnaccmem:
+	ret
+d_accmem endp
+
+
+
+v proc
+	test first_byte, 00000010b
+	jnz	@@shiftcl
+	jz	@@shift1
+
+@@shiftcl:
+	mov dx, offset __CL
+	call writeFile
+	jmp @@returnv
+@@shift1:
+	mov ax, 1
+	call writeNumber
+@@returnv:
+	ret
+v endp
+
+
+sr proc
+	cmp srent_flag, 1
+	jne	@@returnseg
+
+	push ax
+	shr sr_byte, 3
+	mov al, sr_byte
+
+	test al, 00000010b
+	jnz @@s1s
+	jz	@@s0s
+
+@@s1s:
+	test al, 00000001b
+	jnz	@@s11s
+	jz	@@s10s
+
+	@@s11s:
+		mov dx, offset __DS
+		call writeFile
+		jmp @@continueseg
+	@@s10s:
+		mov dx, offset __SS
+		call writeFile
+		jmp @@continueseg
+@@s0s:
+	test al, 00000001b
+	jnz	@@s01s
+	jz	@@s00s
+	
+	@@s01s:
+		mov dx, offset __CS
+		call writeFile
+		jmp @@continueseg
+	@@s00s:
+		mov dx, offset __ES
+		call writeFile
+		jmp @@continueseg
+	
+@@continueseg:
+	mov dx, offset __COLON
+	call writeFile
+	mov srent_flag, 0
+	pop ax
+@@returnseg:
+	ret
+sr endp
+
+
+rm proc
+@@ptr:
+	test first_byte, 00000001b
+	jnz	@@word_ptr
+	jz	@@byte_ptr
+@@word_ptr:
+	mov dx, offset __WORD_PTR
+	call writeFile
+	call sr
+	jmp @@rm_start
+@@byte_ptr:
+	mov dx, offset __BYTE_PTR
+	call writeFile
+	call sr
+	jmp @@rm_start
+
+	
+@@rm_start:
+	mov dx, offset __open_br
+	call writeFile
+
+	test al, 00000100b
+	jnz	@@r1m
+	jz 	@@r0m
+
+	@@r1m:
+		test al, 00000010b
+		jnz @@r11m
+		jz	@@r10m
+
+		@@r11m:
+			test al, 00000001b
+			jnz @@r111m
+			jz 	@@r110m
+			
+			@@r111m:
+				mov dx, offset __BX
+				call writeFile
+				jmp @@continue
+			@@r110m:
+				cmp memory_flag, 1
+				je @@memory
+
+				mov dx, offset __BP
+				call writeFile
+				jmp @@continue
+				
+				@@memory:
+					call writeHex
+					call w
+
+					;sub al, prev_byte
+
+					; mov dx, offset __PLUS
+					; call writeFile
+
+					call getByte
+					; call writeNumber
+
+					jmp @@continue
+
+		@@r10m:
+			test al, 00000001b
+			jnz @@r101m
+			jz 	@@r100m
+
+			@@r101m:
+				mov dx, offset __DI
+				call writeFile
+				jmp @@continue
+			@@r100m:
+				mov dx, offset __SI
+				call writeFile
+				jmp @@continue
+	@@r0m:
+		test al, 00000010b 
+		jnz @@r01m
+		jz	@@r00m
+
+		@@r01m:
+			test al, 00000001b
+			jnz @@r011m
+			jz	@@r000m
+
+			@@r011m:
+				mov dx, offset __BP
+				call writeFile
+				mov dx, offset __plus
+				call writeFile
+				mov dx, offset __DI
+				call writeFile
+				jmp @@continue
+			@@r010m:
+				mov dx, offset __BP
+				call writeFile
+				mov dx, offset __plus
+				call writeFile
+				mov dx, offset __SI
+				call writeFile
+				jmp @@continue
+		@@r00m:
+			test al, 00000001b
+			jnz @@r001m
+			jz	@@r000m
+
+			@@r001m:
+				mov dx, offset __BX
+				call writeFile
+				mov dx, offset __plus
+				call writeFile
+				mov dx, offset __DI
+				call writeFile
+				jmp @@continue
+			@@r000m:
+				mov dx, offset __BP
+				call writeFile
+				mov dx, offset __plus
+				call writeFile
+				mov dx, offset __SI
+				call writeFile
+				jmp @@continue
+@@continue:
+	cmp shift_flag, 0
+	je @@putbr
+
+@@shift:
+	call shift
+@@putbr:
+	mov dx, offset __close_br
+	call writeFile
+	mov shift_flag, 0
+@@returnrm:
+	ret
+rm endp
+
+
+shift proc
+	mov dx, offset __PLUS
+	call writeFile
+
+	push ax
+	xor ax, ax
+	cmp shift_flag, 2
+	je	@@gWord
+	cmp shift_flag, 1
+	je @@gByte
+@@gByte:
+	call getByte
+	jmp @@write
+@@gWord:
+	call getWord	
+@@write:
+	call writeNumber
+	pop ax
+	ret
+shift endp
+
+
+regw proc
+	test al, 00000100b
+	jnz @@w1w
+	jz	@@w0w
+	
+@@w1w:
+	test al, 00000010b
+	jnz @@w11w
+	jz	@@w10w
+
+	@@w11w:
+		test al, 00000001b
+		jnz	@@w111w
+		jz 	@@w110w
+
+		@@w111w:
+			mov dx, offset __DI
+			call writeFile
+			jmp @@returnw
+		@@w110w:
+			mov dx, offset __SI
+			call writeFile
+			jmp @@returnw
+
+	@@w10w:
+		test al, 00000001b
+		jnz @@w101w
+		jz 	@@w100w
+
+		@@w101w:
+			mov dx, offset __BP
+			call writeFile
+			jmp @@returnw
+		@@w100w:
+			mov dx, offset __SP
+			call writeFile
+			jmp @@returnw
+
+@@w0w:
+	test al, 00000010b
+	jnz @@w01w
+	jz	@@w00w
+
+	@@w01w:
+		test al, 00000001b
+		jnz @@w011w
+		jz 	@@w010w
+
+		@@w011w:
+			mov dx, offset __BX
+			call writeFile
+			jmp @@returnw
+		@@w010w:
+			mov dx, offset __DX
+			call writeFile
+			jmp @@returnw
+
+	@@w00w:
+		test al, 00000001b
+		jnz	@@w001w
+		jz	@@w000w
+
+		@@w001w:
+			mov dx, offset __CX
+			call writeFile
+			jmp @@returnw
+		@@w000w:
+			mov dx, offset __AX
+			call writeFile
+			jmp @@returnw
+	
+@@returnw:
+	ret
+regw endp
+
+
+regb proc
+	test al, 00000100b
+	jnz @@b1b
+	jz	@@b0b
+	
+@@b1b:
+	test al, 00000010b
+	jnz @@b11b
+	jz	@@b10b
+
+	@@b11b:
+		test al, 00000001b
+		jnz	@@b111b
+		jz 	@@b110b
+
+		@@b111b:
+			mov dx, offset __BH
+			call writeFile
+			jmp @@returnb
+		@@b110b:
+			mov dx, offset __DH
+			call writeFile
+			jmp @@returnb
+	@@b10b:
+		test al, 00000001b
+		jnz @@b101b
+		jz 	@@b100b
+
+		@@b101b:
+			mov dx, offset __CH
+			call writeFile
+			jmp @@returnb
+		@@b100b:
+			mov dx, offset __AH
+			call writeFile
+			jmp @@returnb
+@@b0b:
+	test al, 00000010b
+	jnz @@b01b
+	jz	@@b00b
+
+	@@b01b:
+		test al, 00000001b
+		jnz @@b011b
+		jz 	@@b010b
+
+		@@b011b:
+			mov dx, offset __BL
+			call writeFile
+			jmp @@returnb
+		@@b010b:
+			mov dx, offset __DL
+			call writeFile
+			jmp @@returnb
+	@@b00b:
+		test al, 00000001b
+		jnz	@@b001b
+		jz	@@b000b
+		@@b001b:
+			mov dx, offset __CL
+			call writeFile
+			jmp @@returnb
+		@@b000b:
+			mov dx, offset __AL
+			call writeFile
+			jmp @@returnb
+	
+@@returnb:
+	ret
+regb endp
+
+
+
+defineInstruction proc
+	test al, 10000000b
+	jnz @@c1c
+	jz 	@@c0c
+	
+@@c1c:
+	test al, 01000000b
+	jnz @@c11c
+	jz  @@c10c
+
+	@@c11c:
+		test al, 00100000b
+		jnz @@c111c
+		jz	@@c110c
+
+		@@c111c:
+			test al, 00010000b
+			jnz @@c1111c
+			jz 	@@c1110c
+
+			@@c1111c: 
+				test al, 00001000b
+				jnz	@@c11111c
+				jz	@@c11110c
+
+				@@c11111c:
+					jmp @@invalid
+				@@c11110c:
+					test al, 00000100b
+					jnz	@@c111101c
+					jz	@@c111100c
+
+					@@c111101c:
+						test al, 00000010b
+						jnz @@c1111011c
+						jz 	@@c1111010c
+
+						@@c1111011c:
+							call getByte
+							test al, 00100000b
+							jnz @@c1111011?c??1c
+							jz	@@c1111011?c??0c
+
+							@@c1111011?c??1c:
+								jmp @@invalid
+							@@c1111011?c??0c:
+								test al, 00010000b
+								jnz @@c1111011?c??01c
+								jz	@@c1111011?c??00c
+							
+								@@c1111011?c??01c:
+									test al, 00001000b
+									jnz @@c1111011?c??011c
+									jz	@@c1111011?c??010c
+
+									@@c1111011?c??011c:
+										jmp @@invalid
+									@@c1111011?c??010c:
+										call notc
+										jmp @@endline
+									
+								@@c1111011?c??00c:
+									jmp @@invalid
+						@@c1111010c:
+							jmp @@invalid
+					@@c111100c:
+						jmp @@invalid
+
+			@@c1110c:
+				test al, 00001000b
+				jnz	@@c11101c
+				jz	@@c11100c
+
+				@@c11101c:
+					test al, 00000100b
+					jnz	@@c111011c
+					jz	@@c111010c
+					
+					@@c111011c:
+						test al, 00000010b
+						jnz	@@c1110111c
+						jz	@@c1110110c
+						
+						@@c1110111c:
+							call outc
+							jmp @@endline
+						@@c1110110c:
+							jmp @@invalid
+
+					@@c111010c:
+						jmp @@invalid
+				@@c11100c:
+					test al, 00000100b
+					jnz	@@c111001c
+					jz	@@c111000c
+
+					@@c111001c:
+						test al, 00000010b
+						jnz	@@c1110011c
+						jz	@@c1110000c
+
+						@@c1110011c:
+							call outc
+							jmp @@endline
+						@@c1110000c:
+							jmp @@invalid
+					@@c111000c:
+						jmp @@invalid
+		@@c110c:
+			test al, 00010000b
+			jnz @@c1101c
+			jz 	@@c1100c
+
+			@@c1101c:
+				test al, 00001000b
+				jnz	@@c11011c
+				jz	@@c11010c
+
+				@@c11011c:
+					jmp @@invalid
+				@@c11010c:
+					test al, 00000100b
+					jnz	@@c110101c
+					jz	@@c110100c
+
+					@@c110101c:
+						test al, 00000010b
+						jnz	@@c1101011c
+						jz 	@@c1101010c
+
+						@@c1101011c:
+							test al, 00000001b
+							jnz	@@c11010111c
+							jz 	@@c11010100c
+
+							@@c11010111c:
+								call xlatc
+								jmp @@endline
+							@@c11010100c:
+								jmp @@invalid
+
+						@@c1101010c:
+							jmp @@invalid
+					@@c110100c:
+						call getByte
+
+						test al, 00100000b
+						jnz	@@c110100??c??1c
+						jz	@@c110100??c??0c
+
+						@@c110100??c??1c:
+							jmp @@invalid
+						@@c110100??c??0c:
+							test al, 00010000b
+							jnz	@@c110100??c??01c
+							jz	@@c110100??c??00c
+
+							@@c110100??c??01c:
+								test al, 00001000b
+								jnz	@@c110100??c??011c
+								jz	@@c110100??c??010c
+
+								@@c110100??c??011c:
+									call rcrc
+									jmp @@endline
+								@@c110100??c??010c:
+									jmp @@invalid
+							@@c110100??c??00c:
+								jmp @@invalid
+			@@c1100c:
+				test al, 00001000b
+				jnz	@@c11001c
+				jz	@@c11000c
+
+				@@c11001c:
+					jmp @@invalid
+
+				@@c11000c:
+					test al, 00000100b
+					jnz	@@c110001c
+					jz	@@c110000c
+
+					@@c110001c:
+						test al, 00000010b
+						jnz	@@c1100011c
+						jz	@@c1100010c
+
+						@@c1100011c:
+							call getByte
+							test al, 001000000b
+							jnz	@@c1100011?c??1c
+							jz	@@c1100011?c??0c
+
+							@@c1100011?c??1c:
+								jmp @@invalid
+							@@c1100011?c??0c:
+								test al, 00010000b
+								jnz	@@c1100011?c??01c
+								jz	@@c1100011?c??00c
+
+								@@c1100011?c??01c:
+									jmp @@invalid
+								@@c1100011?c??00c:
+									test al, 00001000b
+									jnz	@@c1100011?c??001c 
+									jz	@@c1100011?c??000c
+
+									@@c1100011?c??001c:
+										jmp @@invalid
+									@@c1100011?c??000c:
+										call mov_rmimm
+										jmp @@endline
+						@@c1100010c:
+							jmp @@invalid
+					@@c110000c:
+						jmp @@invalid	
+
+	@@c10c:
+		test al, 00100000b
+		jnz @@c101c
+		jz	@@c100c
+
+		@@c101c:
+			test al, 00010000b
+			jnz @@c1011c
+			jz 	@@c1010c
+
+			@@c1011c:
+				call mov_regimm
+				jmp @@endline
+		
+			@@c1010c:
+				test al, 00001000b
+				jnz	@@c10101c
+				jz	@@c10100c
+
+				@@c10101c:
+					jmp @@invalid
+				@@c10100c:
+					test al, 00000100b
+					jnz	@@c101001c
+					jz	@@c101000c
+
+					@@c101001c:
+						test al, 0000010b
+						jnz	@@c1010011c
+						jz	@@c1010010c
+
+						@@c1010011c:
+							jmp @@invalid
+
+						@@c1010010c:
+							call movsc
+							jmp @@endline
+
+					@@c101000c:
+						call mov_memacc
+						jmp @@endline
+		@@c100c:
+			test al, 00010000b
+			jnz @@c1001c
+			jz 	@@c1000c
+
+			@@c1001c:
+				jmp @@invalid
+			@@c1000c:
+				test al, 00001000b
+				jnz @@c10001c
+				jz	@@c10000c
+
+				@@c10001c:
+					test al, 00000100b
+					jnz	@@c100011c
+					jz	@@c100010c
+
+					@@c100011c:
+						call mov_segrm
+						jmp @@endline
+					@@c100010c:
+						call mov_regrm
+						jmp @@endline
+
+				@@c10000c:
+					jmp @@invalid
+@@c0c:
+	test al, 01000000b
+	jnz	@@c01c
+	jz	@@c00c
+	@@c01c:
+		jmp @@returnc
+	@@c00c:
+		test al, 00100000b
+		jnz @@c001c
+		jz 	@@c000c
+
+		@@c001c:
+			test al, 00000100b
+			jnz @@c001??1c
+			jz 	@@c001??0c
+			@@c001??1c:
+				test al, 00000010b
+				jnz	@@c001??11c
+				jz	@@c001??10c
+
+				@@c001??11c:
+					mov srent_flag, 1
+					mov sr_byte, al
+					jmp @@returnc
+				@@c001??10c:
+					jmp @@returnc
+			@@c001??0c:
+				jmp @@returnc
+		@@c000c:
+			jmp @@returnc
+@@invalid:
+	call writeAddress
+	mov dx, offset __INVALID
+	call writeFile
+@@endline:
+	mov dx, offset endline
+	call writeFile
+@@returnc:	
+	ret
+defineInstruction endp
+;########################################
+
+
+;#######################################
+movsc proc
+	call writeAddress
+
+	; 1010 010w – movsb; movsw
+	test first_byte, 00000001b
+	jz	@@movsb
+
+	mov dx, offset __MOVSW
+	jmp @@returnmovs
+@@movsb:
+	mov dx, offset __MOVSB	
+@@returnmovs:
+	call writeFile	
+	ret
+movsc endp
+
+
+xlatc proc
+	call writeAddress
+
+	; 1101 0111 – XLAT
+	mov dx, offset __XLAT
+	call writeFile
+
+	ret
+xlatc endp
+
+
+rcrc proc
+	call writeAddress
+
+	; 1101 00vw mod 011 r/m [poslinkis] – RCR registras/atmintis, {1; CL}
+	mov dx, offset __RCR
+	call writeFile
+	mov mod_byte, al
+	call mods
+	mov dx, offset __COMMA
+	call writeFile
+	call v
+
+	ret
+rcrc endp
+
+outc proc
+	call writeAddress
+
+	; 1110 011w portas – out portas
+	; 1110 111w – out
+	mov dx, offset __OUT
+	call writeFile
+	
+	call port
+
+	ret
+outc endp
+
+
+notc proc
+	call writeAddress
+
+	; 1111 011w mod 010 r/m [poslinkis] – NOT registras/atmintis
+	mov dx, offset __NOT
+	call writeFile
+	xor first_byte, 00000010b
+	call mods
+
+	ret
+notc endp
+
+
+mov_regrm proc
+	call writeAddress
+	call getByte
+
+	; 1000 10dw mod reg r/m [poslinkis] – MOV registras <=> registras/atmintis
+	mov dx, offset __MOV
+	call writeFile
+	call mods
+	mov dx, offset __COMMA
+	call writeFile
+	xor first_byte, 00000010b
+	call mods
+	
+	ret
+mov_regrm endp
+
+
+mov_segrm proc
+	call writeAddress
+	call getByte
+
+	; 1000 11d0 mod 0sr r/m [poslinkis] – MOV srento registras <=> registras/atmintis
+	mov dx, offset __MOV
+	call writeFile
+	call d_segregw
+	mov dx, offset __COMMA
+	call writeFile
+	xor first_byte, 00000010b
+	call d_segregw
+
+	ret
+mov_segrm endp
+
+
+mov_regimm proc
+	call writeAddress
+
+	;1011 wreg bojb [bovb] – MOV registras <- betarpiškas operandas
+	mov dx, offset __MOV
+	call writeFile
+
+	shr first_byte, 3
+	call reg
+	mov dx, offset __COMMA
+	call writeFile
+	
+	call w
+	call writeNumber
+
+	ret
+mov_regimm endp
+
+
+mov_rmimm proc
+	call writeAddress
+	
+	;1100 011w mod 000 r/m [poslinkis] bojb [bovb] – MOV registras/atmintis <- betarpiškas
+	mov dx, offset __MOV
+	call writeFile
+
+	xor first_byte, 00000010b
+	mov mod_byte, al
+	call mods
+	mov dx, offset __COMMA
+	call writeFile
+	call w
+	call writeNumber
+
+	ret
+mov_rmimm endp
+
+
+mov_memacc proc
+	call writeAddress
+
+	;1010 000w adrjb adrvb - MOV akumuliatorius <- atmintis
+	;1010 001w adrjb adrvb - MOV atmintis <- akumuliatorius
+	mov dx, offset __MOV
+	call writeFile
+
+	call d_accmem
+	mov dx, offset __COMMA
+	call writeFile
+	xor first_byte, 00000010b
+	call d_accmem
+
+	ret
+mov_memacc endp
+;###############################
 
 
 end @@beginning 
