@@ -8,7 +8,7 @@
 1010 001w adrjb adrvb – MOV memory <= accumulator\
 1010 010w – MOVSB; MOVSW\
 1011 wreg bojb [bovb] – MOV register <= operand\
-1100 011w mod 000 r/m [shift] bojb [bovb] – MOV register/memory <= operand\
+1100 011w mod 000 r/m [shift] bojb [bovb] – MOV register/memory <= operand
 
 # RCR
 1101 00vw mod 011 r/m [shift] – RCR register/memory, {1; CL}
