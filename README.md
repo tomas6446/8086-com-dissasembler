@@ -20,9 +20,10 @@
 1110 011w port – OUT port
 1110 111w – OUT
 
-#XLAT
+# XLAT
 1101 0111 – XLAT
 
+# Key words
 bojb –  operand least significant byte\
 [bovb] – operand most significant byte, which is not mandatory\
 [shift] – shift, depends on mod value can be 1 or 2 bytes, or not exist at all;
