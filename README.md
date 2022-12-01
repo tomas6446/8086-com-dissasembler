@@ -17,7 +17,7 @@
 1111 011w mod 010 r/m [shift] – NOT register/memory
 
 # OUT
-1110 011w port – OUT port
+1110 011w port – OUT port\
 1110 111w – OUT
 
 # XLAT
