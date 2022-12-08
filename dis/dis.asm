@@ -18,17 +18,18 @@
 	destination     	db MAX_BUFF, ?, MAX_BUFF dup(0)
 	destHandle			dw ?
 	buffer 				db MAX_BUFF dup(?)
-
 	
+	;;; VARIABLES
 	address				dw 100h
 	operand				dw 0
 	first_byte			db 0
 	prev_byte			db 0
 	mod_byte			db 0
-	sr_byte			db 0
+	sr_byte				db 0
 
+	;;; FLAGS
 	shift_flag			db 0
-	srent_flag		db 0
+	sr_flag				db 0
 	memory_flag			db 1
 	
 	;;; COMMANDS
@@ -64,7 +65,7 @@
 	;; index
 	__SI				db 'si$'
 	__DI				db 'di$'
-	;; srent
+	;; segment
 	__ES				db 'es$'
 	__SS				db 'ss$'
 	__DS				db 'ds$'
@@ -77,21 +78,22 @@
 	__COMMA				db ', $'
 	__COLON				db ':$'
 
-	;;; invalid COMMAND
+	;;; INVALID 
 	__INVALID			db 'invalid $'
 
-
+	
 	alignment9			db 9, '$'
 	alignment99			db 9, 9, '$'
 	string 				db 10 dup(0)
 	endline          	db 13, '$'
 	char				db 1, '$'
+
 .code
 @@beginning:	
 	jmp main
 
 main proc
-    ;; open files
+    ;; open files 
     call read_terminal
     
 	;; read source
@@ -114,7 +116,7 @@ readFile proc
 	int 21h
 	jc @@error_read
 	
-	;; sourcepare if nothing was read
+	;; detect if nothing was read
 	mov cx, ax
 	cmp ax, 0                   
 	je @@read_end        
@@ -122,12 +124,13 @@ readFile proc
 	;; point si to dx
 	mov si, dx
 @@repeat:
-	;; get one byte, store it in al
+	;; get one byte from si, store it in al
 	call getByte
 	mov first_byte, al
 	call defineInstruction
 	loop @@repeat
 
+	;; jmp to new buffer
 	jmp @@new_buffer
 @@error_read:
     mov ah, 9h
@@ -216,6 +219,7 @@ open_writing endp
 
 skip_spaces PROC near
 @@skip_spaces_loop:
+	;; if space, then skip, inc pointer 'si'
 	cmp byte ptr ds:[si], ' '
 	jne @@skip_spaces_end
 	inc si
@@ -235,46 +239,49 @@ read_filename PROC near
 	cmp byte ptr ds:[si], ' '     
 	jne @@read_name_next       
 @@read_name_end:
-	mov al, '$'                  
-	stosb                        ; store AL at address ES:(E)DI, di = di + 1
+	mov al, '$'                   
+	;; store AL at address ES:(E)DI, di = di + 1
+	stosb                       
 	pop di ax
 	ret
 @@read_name_next:
+	;; store next char in AL
 	lodsb                        
-	stosb                        ; store AL at address ES:(E)DI, di = di + 1
+	;; store AL at address ES:(E)DI, di = di + 1
+	stosb                        
 	jmp @@read_name_start
 read_filename ENDP
 
 
 writeHex proc
-	push cx bx si
+	push cx bx si					; save previous registers
 
 	xor dx, dx
-	mov cx,	4        		; print 4 hex digits (= 16 bits)
+	mov cx,	4        				; print 4 hex digits (= 16 bits)
 @@move_bits:
-	rol ax, 4   			; move the currently left-most digit into the least significant 4 bits
+	rol ax, 4   					; more first 4 bits to the end
 	mov dl, al
-	and dl, 00001111b  		; isolate the hex digit we want to print
+	and dl, 00001111b  				; isolate the hex digit we want to print
 	cmp dl, 9
 	jbe @@print_digit
-	add dl, 7    			; ... (for 'A'..'F')
-	add dl, '0'  			; and convert it into a character
+	add dl, 7    					; ... (for 'A'..'F')
+	add dl, '0'  					; and convert it into a character
 @@print_letter:
 	push ax
 
-	mov si, offset char		; point si to char
-	mov [si], dl			; put at the start of char with dollar at the end
+	mov si, offset char				; point si to char
+	mov [si], dl					; put at the start of char with dollar at the end
 	mov dx, si	
-	call writeFile			; print character		
+	call writeFile					; print character		
 
 	pop ax
 	jmp @@next
 @@print_digit:   
 	push ax
 
-	xor ah, ah				; clear ah
+	xor ah, ah						; clear ah
 	mov al, dl		 
-	call writeNumber		; print digits
+	call writeNumber				; print digits
 	
 	pop ax
 @@next:
@@ -309,10 +316,11 @@ writeNumber proc
 writeNumber ENDP
 
 
+;; moves address in ax and converts it into hex
 writeAddress proc
 	push ax
-	mov ax, address
-	call writeHex
+	mov ax, address				
+	call writeHex					
 	
 	mov dx, offset __COLON
 	call writeFile
@@ -331,6 +339,8 @@ writeFile proc
 
 	;; find length of string (store length in cx)
 	call strlen
+
+	;; print in file, what is stored in dx
 	mov ah, 40h
 	mov bx, destHandle
 	int  21h
@@ -496,37 +506,41 @@ w proc
 w endp
 
 
-
 d_rmreg proc
 	test first_byte, 00000010b
 	jnz	@@reg
-	jz	@@rm
+	jz	@@rrm
 
+	;; first 3 bits after mod is register
+	;; shift these 3 bits to right
 	@@reg:
 		push ax
 		shr al, 3
 		call reg
 		pop ax
 		jmp @@returnd
-	@@rm:
+	@@rrm:
 		call rm
 @@returnd:
 	ret
 d_rmreg endp
 
 
+
 d_segregw proc
 	test first_byte, 00000010b
-	jnz	@@seg_rm
-	jz	@@rm_seg
+	jnz	@@seg
+	jz	@@srm
 
-	@@seg_rm:
+	;; first 3 bits after mod is segment register
+	;; shift these 3 bits to right
+	@@seg:
 		push ax
 		shr al, 3
 		call sr
 		pop ax
 		jmp @@returns
-	@@rm_seg:
+	@@srm:
 		call regw
 @@returns:
 	ret
@@ -536,16 +550,18 @@ d_segregw endp
 
 d_regreg proc
 	test first_byte, 00000010b
-	jnz	@@regl_reg
-	jz	@@reg_regl
+	jnz	@@regl
+	jz	@@regr
 
-	@@regl_reg:
+	;; first 3 bits after mod is left register
+	;; shift these 3 bits to right
+	@@regl:
 		push ax
 		shr al, 3
 		call reg
 		pop ax
 		jmp @@returnr
-	@@reg_regl:
+	@@regr:
 		call reg
 @@returnr:
 	ret
@@ -586,19 +602,15 @@ v endp
 
 
 sr proc
-	cmp srent_flag, 1
+	cmp sr_flag, 1
 	jne	@@returnseg
 
-	push ax
-	shr sr_byte, 3
-	mov al, sr_byte
-
-	test al, 00000010b
+	test sr_byte, 00000010b
 	jnz @@s1s
 	jz	@@s0s
 
 @@s1s:
-	test al, 00000001b
+	test sr_byte, 00000001b
 	jnz	@@s11s
 	jz	@@s10s
 
@@ -611,7 +623,7 @@ sr proc
 		call writeFile
 		jmp @@continueseg
 @@s0s:
-	test al, 00000001b
+	test sr_byte, 00000001b
 	jnz	@@s01s
 	jz	@@s00s
 	
@@ -627,8 +639,7 @@ sr proc
 @@continueseg:
 	mov dx, offset __COLON
 	call writeFile
-	mov srent_flag, 0
-	pop ax
+	mov sr_flag, 0
 @@returnseg:
 	ret
 sr endp
@@ -1246,8 +1257,7 @@ defineInstruction proc
 				jz	@@c001??10c
 
 				@@c001??11c:
-					mov srent_flag, 1
-					mov sr_byte, al
+					call seg_label
 					jmp @@returnc
 				@@c001??10c:
 					jmp @@returnc
@@ -1360,7 +1370,7 @@ mov_segrm proc
 	call writeAddress
 	call getByte
 
-	; 1000 11d0 mod 0sr r/m [poslinkis] – MOV srento registras <=> registras/atmintis
+	; 1000 11d0 mod 0sr r/m [poslinkis] – MOV segment registras <=> registras/atmintis
 	mov dx, offset __MOV
 	call writeFile
 	call d_segregw
@@ -1427,6 +1437,17 @@ mov_memacc proc
 
 	ret
 mov_memacc endp
+
+
+;; *ONLY WORKS on MOV segm reg <=> r/m
+seg_label proc
+	mov sr_flag, 1
+	mov sr_byte, al
+	;; change shr for specific command
+	shr sr_byte, 3 
+	ret
+seg_label endp
+
 ;###############################
 
 

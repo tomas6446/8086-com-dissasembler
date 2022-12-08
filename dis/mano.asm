@@ -19,13 +19,21 @@ Pradzia:
 	mov byte ptr[bp+di+12], dl
 	mov word ptr[bp+di+6000], dx
 	mov word ptr[bp+di+12], dx
-	mov ax, [bx+si] 
+	mov ax, [bp+si] 
 	mov es:[bx+si], dl
-	mov ax, cs:[bx+si] 
+	mov ax, cs:[bp+si] 
 	mov ds:[si], ax
 	mov ss:[si+5123], 1000
+	rcr ax, 1
+	out dx, ax
+	mov ax, 12345
+	mov ax, [dataw]
+	mov cl, [datab]
+	rcr ax, 10
 	
 
+	dataw dw 123
+	datab db 34
 BSeg ENDS
 
 	
