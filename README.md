@@ -34,5 +34,5 @@ w - operand size {0 = 1 byte; 1 = 2 bytes}\
 
 
 # Run in DoxBox
-"c dis" inside of the directiory\
+c dis\
 dis.exe mano.com kodas.asm
