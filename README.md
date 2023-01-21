@@ -1,7 +1,7 @@
-# com-dissasembler
+## com-dissasembler
 Partial 8086 dissasembler
 
-# Insturctions
+# Instuctions
 ### MOV
 1000 10dw mod reg r/m [shift] – MOV register <=> register/memory\
 1000 11d0 mod 0sr r/m [shift] – MOV segment register  <=> register/memory\
